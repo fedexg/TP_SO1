@@ -4,11 +4,12 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
+#include <sys/un.h>
 #include <string.h>
 #include <unistd.h>
 
 #define OK    0
-#define FAIL -1
+#define FAIL  -1
 #define PORT  12529
 
 // SOCK_STREAM -> TCP
@@ -135,10 +136,13 @@ int init_erlang_socket(void)
     }
 
     // Bind and set socket to listen mode
-    struct sockaddr_in sa_erlang;
-    sa_erlang.sin_family = AF_UNIX;
-    sa_erlang.sin_port = htons(PORT);
-    sa_erlang.sin_addr.s_addr = htonl(INADDR_ANY);
+    struct sockaddr_un sa_erlang;
+    sa_erlang.sun_family = AF_UNIX;
+    const char *socket_path = "/tmp/erlang_socket";
+    strncpy(sa_erlang.sun_path, socket_path, strlen(socket_path) - 1);
+
+    // In case the socket was left over from a previous execution, delete it
+    unlink(sa_erlang.sun_path);
 
     if (bind(erlang_sock, (struct sockaddr *)&sa_erlang, sizeof(sa_erlang)) < 0) {
         error("Error intentando asignar una dirección al socket de Erlang");
