@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <sys/socket.h>
+#include <sys/epoll.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -14,11 +15,12 @@
 // SOCK_DGRAM ->  UDP
 
 int public_sock, erlang_sock;
+int epoll_fd;
 
 void error(const char *msg);
+int init_sockets(void);
 int init_agents_socket(void);
 int init_erlang_socket(void);
-int init_sockets(void);
 int init_epoll(void);
 int startup(void);
 int add_descriptors(void);
@@ -30,14 +32,29 @@ int main()
     if (init_sockets() < 0)
         return 1;
 
-    if (init_epoll() < 0)
-        return 1;
+    if (init_epoll() < 0) {
+        int rc = close_sockets();
+        if (rc < 0)
+            return 1;
 
-    if (startup() < 0)
         return 1;
+    }
 
-    if (add_descriptors())
+    if (startup() < 0) {
+        int rc = close_sockets();
+        if (rc < 0)
+            return 1;
+
         return 1;
+    }
+
+    if (add_descriptors()) {
+        int rc = close_sockets();
+        if (rc < 0)
+            return 1;
+
+        return 1;
+    }
 
     for (;;) {
         // TODO
@@ -48,12 +65,24 @@ int main()
 
     if (close_sockets() < 0)
         return 1;
+
     return 0;
 }
 
 void error(const char *msg)
 {
     printf("%s: %s\n", msg, strerror(errno));
+}
+
+int init_sockets(void)
+{
+    if (init_agents_socket() < 0)
+        return FAIL;
+
+    if (init_erlang_socket() < 0)
+        return FAIL;
+
+    return OK;
 }
 
 int init_agents_socket(void)
@@ -124,20 +153,14 @@ int init_erlang_socket(void)
     return OK;
 }
 
-int init_sockets(void)
-{
-    if (init_agents_socket() < 0)
-        return FAIL;
-
-    if (init_erlang_socket() < 0)
-        return FAIL;
-
-    return OK;
-}
-
 int init_epoll(void)
 {
-    assert(0 && "TODO: init_epoll not implemented");
+    epoll_fd = epoll_create(1);
+    if (epoll_fd < 0) {
+        error("Error intentando crear la instancia de epoll");
+        return FAIL;
+    }
+
     return OK;
 }
 
@@ -155,7 +178,11 @@ int add_descriptors(void)
 
 int close_epoll(void)
 {
-    assert(0 && "TODO: close_epoll not implemented");
+    if (close(epoll_fd) < 0) {
+        error("Error intentando destruir la instancia de epoll");
+        return FAIL;
+    }
+
     return OK;
 }
 
