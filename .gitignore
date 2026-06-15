@@ -1,3 +1,4 @@
 a.out
 agente
 *.beam
+*.o
