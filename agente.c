@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
-#include <sys/un.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -96,13 +95,14 @@ int init_agents_socket(void)
     }
 
     // Set agent sockets to be reused
-    if (setsockopt(public_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 1) {
+    if (setsockopt(public_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket público para ser reusado");
         return FAIL;
     }
 
     // Bind and set socket to listen mode
     struct sockaddr_in sa_public;
+    memset(&sa_public, 0, sizeof(sa_public));
     sa_public.sin_family = AF_INET;
     sa_public.sin_port = htons(PORT);
     sa_public.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -123,26 +123,24 @@ int init_agents_socket(void)
 int init_erlang_socket(void)
 {
     int yes = 1;
-    erlang_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    erlang_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (erlang_sock < 0) {
         error("Error intentando iniciar el socket para Erlang");
         return FAIL;
     }
 
     // Set erlang sockets to be reused
-    if (setsockopt(erlang_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 1) {
+    if (setsockopt(erlang_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket de Erlang para ser reusado");
         return FAIL;
     }
 
     // Bind and set socket to listen mode
-    struct sockaddr_un sa_erlang;
-    sa_erlang.sun_family = AF_UNIX;
-    const char *socket_path = "/tmp/erlang_socket";
-    strncpy(sa_erlang.sun_path, socket_path, strlen(socket_path) - 1);
-
-    // In case the socket was left over from a previous execution, delete it
-    unlink(sa_erlang.sun_path);
+    struct sockaddr_in sa_erlang;
+    memset(&sa_erlang, 0, sizeof(sa_erlang));
+    sa_erlang.sin_family = AF_INET;
+    sa_erlang.sin_port = htons(PORT);
+    sa_public.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     if (bind(erlang_sock, (struct sockaddr *)&sa_erlang, sizeof(sa_erlang)) < 0) {
         error("Error intentando asignar una dirección al socket de Erlang");
