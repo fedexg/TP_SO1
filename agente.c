@@ -12,6 +12,9 @@
 #define PORT       12529
 #define MAX_EVENTS 10
 
+#define CLEAN_SOCKETS  0b1
+#define CLEAN_EPOLL   0b10
+
 // SOCK_STREAM -> TCP
 // SOCK_DGRAM ->  UDP
 
@@ -29,43 +32,21 @@ int add_descriptors(void);
 int add_descriptor(int fd);
 int close_epoll(void);
 int close_sockets(void);
+int cleanup(int flags);
 
 int main()
 {
     if (init_sockets() < 0)
         return 1;
 
-    if (init_epoll() < 0) {
-        int rc = close_sockets();
-        if (rc < 0)
-            return 1;
+    if (init_epoll() < 0)
+        return cleanup(CLEAN_SOCKETS);
 
-        return 1;
-    }
+    if (add_descriptors())
+        return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
-    if (add_descriptors()) {
-        int rc = close_sockets();
-        if (rc < 0)
-            return 1;
-
-        rc = close_epoll();
-        if (rc < 0)
-            return 1;
-
-        return 1;
-    }
-
-    if (startup() < 0) {
-        int rc = close_sockets();
-        if (rc < 0)
-            return 1;
-
-        rc = close_epoll();
-        if (rc < 0)
-            return 1;
-
-        return 1;
-    }
+    if (startup() < 0)
+        return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
     for (;;) {
         // TODO
@@ -230,4 +211,17 @@ int close_sockets(void)
     }
 
     return OK;
+}
+
+int cleanup(int flags)
+{
+    if ((flags & 0b1) == CLEAN_SOCKETS)
+        if (close_sockets() < 0)
+            return 1;
+
+    if ((flags & 0b10) == CLEAN_EPOLL)
+        if (close_epoll() < 0)
+            return 1;
+
+    return 1;
 }
