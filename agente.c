@@ -6,19 +6,18 @@
 #include <sys/epoll.h>
 #include <string.h>
 #include <unistd.h>
-#include <pthread.h>
 
-#define OK    0
-#define FAIL  -1
-#define PORT  12529
+#define OK         0
+#define FAIL       -1
+#define PORT       12529
+#define MAX_EVENTS 10
 
 // SOCK_STREAM -> TCP
 // SOCK_DGRAM ->  UDP
 
 int public_sock, erlang_sock;
 int epoll_fd;
-pthread_t epoll_thread;
-struct epoll_event ev, events[MAX_EVENTS];
+struct epoll_event events[MAX_EVENTS];
 
 void error(const char *msg);
 int init_sockets(void);
@@ -27,6 +26,7 @@ int init_erlang_socket(void);
 int init_epoll(void);
 int startup(void);
 int add_descriptors(void);
+int add_descriptor(int fd);
 int close_epoll(void);
 int close_sockets(void);
 
@@ -43,16 +43,24 @@ int main()
         return 1;
     }
 
-    if (startup() < 0) {
+    if (add_descriptors()) {
         int rc = close_sockets();
+        if (rc < 0)
+            return 1;
+
+        rc = close_epoll();
         if (rc < 0)
             return 1;
 
         return 1;
     }
 
-    if (add_descriptors()) {
+    if (startup() < 0) {
         int rc = close_sockets();
+        if (rc < 0)
+            return 1;
+
+        rc = close_epoll();
         if (rc < 0)
             return 1;
 
@@ -98,7 +106,7 @@ int init_agents_socket(void)
     }
 
     // Set agent sockets to be reused
-    if (setsockopt(public_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
+    if (setsockopt(public_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket público para ser reusado");
         return FAIL;
     }
@@ -133,7 +141,7 @@ int init_erlang_socket(void)
     }
 
     // Set erlang sockets to be reused
-    if (setsockopt(erlang_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
+    if (setsockopt(erlang_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket de Erlang para ser reusado");
         return FAIL;
     }
@@ -177,7 +185,25 @@ int startup(void)
 
 int add_descriptors(void)
 {
-    assert(0 && "TODO: add_descriptors not implemented");
+    if (add_descriptor(public_sock) < 0)
+        return FAIL;
+
+    if (add_descriptor(erlang_sock) < 0)
+        return FAIL;
+
+    return OK;
+}
+
+int add_descriptor(int fd)
+{
+    struct epoll_event ev;
+    ev.events = EPOLLIN;
+    ev.data.fd = fd;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
+        error("Error intentando añadir el socket a la instancia de epoll");
+        return FAIL;
+    }
+
     return OK;
 }
 
