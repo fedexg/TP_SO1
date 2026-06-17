@@ -6,6 +6,7 @@
 #include <sys/epoll.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #define OK    0
 #define FAIL  -1
@@ -16,6 +17,8 @@
 
 int public_sock, erlang_sock;
 int epoll_fd;
+pthread_t epoll_thread;
+struct epoll_event ev, events[MAX_EVENTS];
 
 void error(const char *msg);
 int init_sockets(void);
@@ -140,7 +143,7 @@ int init_erlang_socket(void)
     memset(&sa_erlang, 0, sizeof(sa_erlang));
     sa_erlang.sin_family = AF_INET;
     sa_erlang.sin_port = htons(PORT);
-    sa_public.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa_erlang.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     if (bind(erlang_sock, (struct sockaddr *)&sa_erlang, sizeof(sa_erlang)) < 0) {
         error("Error intentando asignar una dirección al socket de Erlang");
