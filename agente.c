@@ -22,14 +22,14 @@
 // SOCK_STREAM -> TCP
 // SOCK_DGRAM ->  UDP
 
-int public_sock, erlang_sock;
+int listen_public_sock, listen_erlang_sock;
 int epoll_fd, num_fds_ready;
 struct epoll_event ev, events[EPOLL_MAX_EVENTS];
 
 void error(const char *msg);
 int init_sockets(void);
 int init_agents_socket(void);
-int init_erlang_socket(void);
+int init_listen_erlang_socket(void);
 int init_epoll(void);
 int startup(void);
 int add_descriptors(void);
@@ -78,7 +78,7 @@ int init_sockets(void)
     if (init_agents_socket() < 0)
         return FAIL;
 
-    if (init_erlang_socket() < 0)
+    if (init_listen_erlang_socket() < 0)
         return FAIL;
 
     return OK;
@@ -87,14 +87,14 @@ int init_sockets(void)
 int init_agents_socket(void)
 {
     int yes = 1;
-    public_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (public_sock < 0) {
+    listen_public_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_public_sock < 0) {
         error("Error intentando iniciar el socket para otros agentes");
         return FAIL;
     }
 
     // Set agent sockets to be reused
-    if (setsockopt(public_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
+    if (setsockopt(listen_public_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket público para ser reusado");
         return FAIL;
     }
@@ -106,12 +106,12 @@ int init_agents_socket(void)
     sa_public.sin_port = htons(PORT);
     sa_public.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    if (bind(public_sock, (struct sockaddr *)&sa_public, sizeof(sa_public)) < 0) {
+    if (bind(listen_public_sock, (struct sockaddr *)&sa_public, sizeof(sa_public)) < 0) {
         error("Error intentando asignar una dirección al socket público");
         return FAIL;
     }
 
-    if (listen(public_sock, 10) < 0) {
+    if (listen(listen_public_sock, 10) < 0) {
         error("Error intentando setear el socket público para escuchar");
         return FAIL;
     }
@@ -119,17 +119,17 @@ int init_agents_socket(void)
     return OK;
 }
 
-int init_erlang_socket(void)
+int init_listen_erlang_socket(void)
 {
     int yes = 1;
-    erlang_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (erlang_sock < 0) {
+    listen_erlang_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_erlang_sock < 0) {
         error("Error intentando iniciar el socket para Erlang");
         return FAIL;
     }
 
     // Set erlang sockets to be reused
-    if (setsockopt(erlang_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
+    if (setsockopt(listen_erlang_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket de Erlang para ser reusado");
         return FAIL;
     }
@@ -141,12 +141,12 @@ int init_erlang_socket(void)
     sa_erlang.sin_port = htons(PORT);
     sa_erlang.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
-    if (bind(erlang_sock, (struct sockaddr *)&sa_erlang, sizeof(sa_erlang)) < 0) {
+    if (bind(listen_erlang_sock, (struct sockaddr *)&sa_erlang, sizeof(sa_erlang)) < 0) {
         error("Error intentando asignar una dirección al socket de Erlang");
         return FAIL;
     }
 
-    if (listen(erlang_sock, 10) < 0) {
+    if (listen(listen_erlang_sock, 10) < 0) {
         error("Error intentando setear el socket Erlang para escuchar");
         return FAIL;
     }
@@ -173,10 +173,10 @@ int startup(void)
 
 int add_descriptors(void)
 {
-    if (add_descriptor(public_sock) < 0)
+    if (add_descriptor(listen_public_sock) < 0)
         return FAIL;
 
-    if (add_descriptor(erlang_sock) < 0)
+    if (add_descriptor(listen_erlang_sock) < 0)
         return FAIL;
 
     return OK;
@@ -204,31 +204,31 @@ void *epoll_handler(void *arg)
         }
 
         for (int i = 0; i < num_fds_ready; ++i) {
-            if (events[i].data.fd == public_sock) {
+            if (events[i].data.fd == listen_public_sock) {
                 // TODO (para equipo): necesitamos saber la información que nos devuelve accept? (1)
-                int connect_public_sock = accept(public_sock, NULL, NULL);
-                if (connect_public_sock == -1) {
+                int connect_listen_public_sock = accept(listen_public_sock, NULL, NULL);
+                if (connect_listen_public_sock == -1) {
                     error("Error intentando aceptar un agente");
                     exit(EXIT_FAILURE);
                 }
 
-                // TODO: make connect_public_sock non-blocking
+                // TODO: make connect_listen_public_sock non-blocking
                 ev.events = EPOLLIN | EPOLLOUT;
-                ev.data.fd = connect_public_sock;
-                if (add_descriptor(connect_public_sock) < 0)
+                ev.data.fd = connect_listen_public_sock;
+                if (add_descriptor(connect_listen_public_sock) < 0)
                     exit(EXIT_FAILURE);
-            } else if (events[i].data.fd == erlang_sock) {
+            } else if (events[i].data.fd == listen_erlang_sock) {
                 // TODO (para equipo): misma pregunta que (1)
-                int connect_erlang_sock = accept(erlang_sock, NULL, NULL);
-                if (connect_erlang_sock == -1) {
+                int connect_listen_erlang_sock = accept(listen_erlang_sock, NULL, NULL);
+                if (connect_listen_erlang_sock == -1) {
                     error("Error intentando aceptar un agente");
                     exit(EXIT_FAILURE);
                 }
 
-                // TODO: make connect_erlang_sock non-blocking
+                // TODO: make connect_listen_erlang_sock non-blocking
                 ev.events = EPOLLIN | EPOLLOUT;
-                ev.data.fd = connect_erlang_sock;
-                if (add_descriptor(connect_erlang_sock) < 0)
+                ev.data.fd = connect_listen_erlang_sock;
+                if (add_descriptor(connect_listen_erlang_sock) < 0)
                     exit(EXIT_FAILURE);
             } else {
                 // TODO: process event
@@ -249,12 +249,12 @@ int close_epoll(void)
 
 int close_sockets(void)
 {
-    if (close(erlang_sock) < 0) {
+    if (close(listen_erlang_sock) < 0) {
         error("Error intentando cerrar el socket de Erlang");
         return FAIL;
     }
 
-    if (close(public_sock) < 0) {
+    if (close(listen_public_sock) < 0) {
         error("Error intentando cerrar el socket para los agentes");
         return FAIL;
     }
