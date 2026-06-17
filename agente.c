@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +36,7 @@ int startup(void);
 int add_descriptors(void);
 int add_descriptor(int fd);
 void *epoll_handler(void *arg);
+int set_socket_nonblocking(int sock);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
@@ -206,35 +208,48 @@ void *epoll_handler(void *arg)
         for (int i = 0; i < num_fds_ready; ++i) {
             if (events[i].data.fd == listen_public_sock) {
                 // TODO (para equipo): necesitamos saber la información que nos devuelve accept? (1)
-                int connect_listen_public_sock = accept(listen_public_sock, NULL, NULL);
-                if (connect_listen_public_sock == -1) {
+                int connect_public_sock = accept(listen_public_sock, NULL, NULL);
+                if (connect_public_sock == -1) {
                     error("Error intentando aceptar un agente");
                     exit(EXIT_FAILURE);
                 }
 
-                // TODO: make connect_listen_public_sock non-blocking
+                set_socket_nonblocking(connect_public_sock);
+
                 ev.events = EPOLLIN | EPOLLOUT;
-                ev.data.fd = connect_listen_public_sock;
-                if (add_descriptor(connect_listen_public_sock) < 0)
+                ev.data.fd = connect_public_sock;
+                if (add_descriptor(connect_public_sock) < 0)
                     exit(EXIT_FAILURE);
             } else if (events[i].data.fd == listen_erlang_sock) {
                 // TODO (para equipo): misma pregunta que (1)
-                int connect_listen_erlang_sock = accept(listen_erlang_sock, NULL, NULL);
-                if (connect_listen_erlang_sock == -1) {
-                    error("Error intentando aceptar un agente");
+                int connect_erlang_sock = accept(listen_erlang_sock, NULL, NULL);
+                if (connect_erlang_sock == -1) {
+                    error("Error intentando aceptar un cliente Erlang");
                     exit(EXIT_FAILURE);
                 }
 
-                // TODO: make connect_listen_erlang_sock non-blocking
+                set_socket_nonblocking(connect_erlang_sock);
+
                 ev.events = EPOLLIN | EPOLLOUT;
-                ev.data.fd = connect_listen_erlang_sock;
-                if (add_descriptor(connect_listen_erlang_sock) < 0)
+                ev.data.fd = connect_erlang_sock;
+                if (add_descriptor(connect_erlang_sock) < 0)
                     exit(EXIT_FAILURE);
             } else {
                 // TODO: process event
             }
         }
     }
+}
+
+// https://stackoverflow.com/a/73879155
+int set_socket_nonblocking(int sock)
+{
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags == -1)
+        return FAIL;
+
+    flags |= O_NONBLOCK;
+    return fcntl(sock, F_SETFL, flags);
 }
 
 int close_epoll(void)
