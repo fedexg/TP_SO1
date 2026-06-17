@@ -1,7 +1,9 @@
 #include <assert.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
 #include <string.h>
@@ -10,7 +12,9 @@
 #define OK         0
 #define FAIL       -1
 #define PORT       12529
-#define MAX_EVENTS 10
+
+#define EPOLL_MAX_EVENTS 10
+#define EPOLL_TIMEOUT -1
 
 #define CLEAN_SOCKETS  0b1
 #define CLEAN_EPOLL   0b10
@@ -19,8 +23,8 @@
 // SOCK_DGRAM ->  UDP
 
 int public_sock, erlang_sock;
-int epoll_fd;
-struct epoll_event events[MAX_EVENTS];
+int epoll_fd, num_fds_ready;
+struct epoll_event ev, events[EPOLL_MAX_EVENTS];
 
 void error(const char *msg);
 int init_sockets(void);
@@ -30,6 +34,7 @@ int init_epoll(void);
 int startup(void);
 int add_descriptors(void);
 int add_descriptor(int fd);
+void *epoll_handler(void *arg);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
@@ -48,9 +53,11 @@ int main()
     if (startup() < 0)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
-    for (;;) {
-        // TODO
-    }
+    pthread_t epoll_thread;
+    if (pthread_create(&epoll_thread, NULL, epoll_handler, NULL) < 0)
+        return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
+
+    pthread_join(epoll_thread, NULL);
 
     if (close_epoll() < 0)
         return 1;
@@ -177,7 +184,6 @@ int add_descriptors(void)
 
 int add_descriptor(int fd)
 {
-    struct epoll_event ev;
     ev.events = EPOLLIN;
     ev.data.fd = fd;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
@@ -186,6 +192,49 @@ int add_descriptor(int fd)
     }
 
     return OK;
+}
+
+void *epoll_handler(void *arg)
+{
+    for (;;) {
+        num_fds_ready = epoll_wait(epoll_fd, events, EPOLL_MAX_EVENTS, EPOLL_TIMEOUT);
+        if (num_fds_ready == -1) {
+            error("Error en el bucle de epoll");
+            exit(EXIT_FAILURE);
+        }
+
+        for (int i = 0; i < num_fds_ready; ++i) {
+            if (events[i].data.fd == public_sock) {
+                // TODO (para equipo): necesitamos saber la información que nos devuelve accept? (1)
+                int connect_public_sock = accept(public_sock, NULL, NULL);
+                if (connect_public_sock == -1) {
+                    error("Error intentando aceptar un agente");
+                    exit(EXIT_FAILURE);
+                }
+
+                // TODO: make connect_public_sock non-blocking
+                ev.events = EPOLLIN | EPOLLOUT;
+                ev.data.fd = connect_public_sock;
+                if (add_descriptor(connect_public_sock) < 0)
+                    exit(EXIT_FAILURE);
+            } else if (events[i].data.fd == erlang_sock) {
+                // TODO (para equipo): misma pregunta que (1)
+                int connect_erlang_sock = accept(erlang_sock, NULL, NULL);
+                if (connect_erlang_sock == -1) {
+                    error("Error intentando aceptar un agente");
+                    exit(EXIT_FAILURE);
+                }
+
+                // TODO: make connect_erlang_sock non-blocking
+                ev.events = EPOLLIN | EPOLLOUT;
+                ev.data.fd = connect_erlang_sock;
+                if (add_descriptor(connect_erlang_sock) < 0)
+                    exit(EXIT_FAILURE);
+            } else {
+                // TODO: process event
+            }
+        }
+    }
 }
 
 int close_epoll(void)
