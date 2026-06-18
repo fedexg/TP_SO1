@@ -55,7 +55,7 @@ typedef struct _LocalResources {
 
 // Cell of node_map
 typedef struct _NodeMapCell {
-    int ip;
+    char* ip;
     int port;
     LocalResources resources;
     time_t time_when_called;
@@ -97,11 +97,14 @@ char **split(char *text, char *delimiter, int *len);
 Request parse_request(char **request_fields, int n_fields);
 void process_request(Request req, int fd);
 bool exists_resource(ResourceKind kind, int amount);
-void return_resources(ResourceKind kind, int amount);
+void give_resources(ResourceKind kind, int amount);
 void increase_resources(ResourceKind kind, int amount);
-LocalResources get_request_resource(Request req);
 Request *request_dup(Request *req);
 void handle_erlang_client(int erlang_client_fd);
+void handle_job_request(char** request_fields,int fd);
+void handle_job_release(char** request_fields,int fd);
+void handle_job_status(char** request_fields,int fd);
+void handle_get_nodes(char** request_fields,int fd);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
@@ -140,6 +143,7 @@ void error(const char *msg)
     printf("%s: %s\n", msg, strerror(errno));
 }
 
+// Initialize c agent and erlang sockets
 int init_sockets(void)
 {
     if (init_agents_socket() < 0)
@@ -151,6 +155,7 @@ int init_sockets(void)
     return OK;
 }
 
+// Initializes the sockets used by the c agent
 int init_agents_socket(void)
 {
     int yes = 1;
@@ -186,8 +191,10 @@ int init_agents_socket(void)
     return OK;
 }
 
+// Initializes the erlang planner socket
 int init_listen_erlang_socket(void)
 {
+    // yeses the yes
     int yes = 1;
     listen_erlang_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_erlang_sock < 0) {
@@ -221,6 +228,7 @@ int init_listen_erlang_socket(void)
     return OK;
 }
 
+// Initializes the epoll instance
 int init_epoll(void)
 {
     epoll_fd = epoll_create(1);
@@ -249,6 +257,7 @@ int add_descriptors(void)
     return OK;
 }
 
+// Adds the corresponding file descriptor to the epoll instance
 int add_descriptor(int fd)
 {
     ev.events = EPOLLIN;
@@ -261,6 +270,7 @@ int add_descriptor(int fd)
     return OK;
 }
 
+// Handles incoming epoll events
 void *epoll_handler(void *arg)
 {
     for (;;) {
@@ -336,6 +346,7 @@ void handle_c_agent(int fd)
     }
 }
 
+// Given a string text and a delimiter, splits the string and stores in len the length of the char** it returns
 char **split(char *text, char *delimiter, int *len)
 {
     int cap = 32;
@@ -355,6 +366,7 @@ char **split(char *text, char *delimiter, int *len)
     return result;
 }
 
+// Given request_fields, returns a request type datastructure.
 Request parse_request(char **request_fields, int n_fields)
 {
     Request req;
@@ -378,6 +390,7 @@ Request parse_request(char **request_fields, int n_fields)
     return req;
 }
 
+// Given a request and a file descriptor, processes the agent c request.
 void process_request(Request req, int fd)
 {
     char response_to_agent[128] = {0};
@@ -413,7 +426,7 @@ void process_request(Request req, int fd)
             }
 
             hashmap_put(job_map, &cell);
-            return_resources(req.kind, req.amount);
+            give_resources(req.res_kind, req.amount);
             sprintf(response_to_agent, "GRANTED %lld", req.job_id);
             send(fd, response_to_agent, 8, 0);
         } else {
@@ -423,7 +436,7 @@ void process_request(Request req, int fd)
         }
         break;
     case REQUEST_KIND_RELEASE:
-        increase_resources(req.kind, req.amount);
+        increase_resources(req.res_kind, req.amount);
         JobMapCell *cell = hashmap_search(job_map, &req.job_id);
 
         // Cell not found, therefore no job with that id was found.
@@ -432,9 +445,18 @@ void process_request(Request req, int fd)
             send(fd, response_to_agent, 8, 0);
         }
 
-        // TODO: modify based on kind (subtract)
-        switch (req.kind) {
-        default:
+        switch (req.res_kind) {
+            case RES_KIND_CPU:
+            cell->granted_resources.cpu -= req.amount;
+            break;
+            case RES_KIND_GPU:
+            cell->granted_resources.gpu -= req.amount;
+            break;
+            case RES_KIND_MEM:
+            cell->granted_resources.mem -= req.amount;
+            break;
+            default:
+            // lol
             break;
         }
 
@@ -445,6 +467,7 @@ void process_request(Request req, int fd)
     }
 }
 
+// Returns true if there are enough resources requested in the local node
 bool exists_resource(ResourceKind kind, int amount)
 {
     switch (kind) {
@@ -467,7 +490,8 @@ bool exists_resource(ResourceKind kind, int amount)
     return false;
 }
 
-void return_resources(ResourceKind kind, int amount)
+// Decreases a node resource (which is specified by kind) by a given amount
+void give_resources(ResourceKind kind, int amount)
 {
     switch (kind) {
     case RES_KIND_CPU:
@@ -484,6 +508,7 @@ void return_resources(ResourceKind kind, int amount)
     }
 }
 
+// Increases a node resource (which is specified by kind) by a given amount
 void increase_resources(ResourceKind kind, int amount)
 {
     switch (kind) {
@@ -501,24 +526,6 @@ void increase_resources(ResourceKind kind, int amount)
     }
 }
 
-LocalResources get_request_resource(Request req)
-{
-    LocalResources res = { 0 };
-    switch (req.res_kind) {
-    case RES_KIND_CPU:
-        res.cpu = req.amount;
-        break;
-    case RES_KIND_MEM:
-        res.mem = req.amount;
-        break;
-    case RES_KIND_GPU:
-        res.gpu = req.amount;
-        break;
-    }
-
-    return res;
-}
-
 Request *request_dup(Request *req)
 {
     Request *cloned = malloc(sizeof(Request));
@@ -530,11 +537,61 @@ Request *request_dup(Request *req)
     return cloned;
 }
 
+// Handles an erlang client connection
 void handle_erlang_client(int fd)
 {
-    // TODO
+    char buffer[BUFFER_MAX_SIZE];
+    memset(buffer, 0, BUFFER_MAX_SIZE);
+    ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE -1);
+    if (bytes_read <= 0);
+        // TODO error no bytes read
+    else {
+        int length = 0;
+        char **request_fields = split(buffer, " ", &length);
+        if (streq(request_fields[0],"JOB_REQUEST")){
+            handle_job_request(request_fields, fd);
+        }
+        else if (streq(request_fields[0],"JOB_RELEASE")){
+            handle_job_release(request_fields,fd);
+        }
+        else if(streq(request_fields[0],"JOB_STATUS")){
+            handle_job_status(request_fields,fd);
+        }
+        else if(streq(request_fields[0],"GET_NODES")){
+            handle_get_nodes(request_fields,fd);
+        }
+        else{
+            // TODO: HANDLE ERROR
+        }
+    }
 }
 
+// Handles an incoming job request from the erlang client
+// IMPLEMENTACION: RECIBE LA REQUEST -> OTORGA RECURSOS LOCALS (O NO) -> MANDA RESERVE A LOS AGENTES C CORRESPONDIENTES
+void handle_job_request(char** request_fields,int fd){
+
+}
+// Handles an incoming job release from the erlang client
+// IMPLEMENTACION: RECIBE RELEASE -> LIBERA RECURSOS LOCALES (O NO) -> ELIMINA EL JOB DE JOB_MAP -> MANDA RELEASE A LOS AGENTES C CORRESPONDIENTES
+void handle_job_release(char** request_fields,int fd){
+
+}
+// Handles an incoming job status from the erlang client
+// TIMEOUT -> ?????
+// GRANTED -> Estan los recursos disponibles (EN TODA LA RED) para que haga el job
+// DENIED -> TODO
+// IMPLEMENTACION: QUIEN SABE
+void handle_job_status(char** request_fields,int fd){
+
+}
+// Handles an incoming get nodes from the erlang client
+// IMPLEMENTACION: RECORRER NODE_MAP -> SEND LOS NODOS QUE HAYA EN LA RED
+void handle_get_nodes(char** request_fields,int fd){
+
+}
+
+
+// Closes the epoll instance
 int close_epoll(void)
 {
     if (close(epoll_fd) < 0) {
@@ -545,6 +602,7 @@ int close_epoll(void)
     return OK;
 }
 
+// Closes global sockets
 int close_sockets(void)
 {
     if (close(listen_erlang_sock) < 0) {
