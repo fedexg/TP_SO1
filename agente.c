@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
@@ -36,32 +37,31 @@ typedef enum {
     RES_KIND_CPU = 0,
     RES_KIND_MEM,
     RES_KIND_GPU
-}ResourceKind;
+} ResourceKind;
 
 // SOCK_STREAM -> TCP
 // SOCK_DGRAM ->  UDP
 
-
 // Local node resources
-typedef struct _local_resources{
+typedef struct _LocalResources {
     int cpu;
     int mem;
     int gpu;
-}local_resources;
+} LocalResources;
 
 // Cell of node_map
-typedef struct _node_map_cell{
+typedef struct _NodeMapCell {
     int ip;
-    int puerto;
-    local_resources resources;
+    int port;
+    LocalResources resources;
     time_t time_when_called;
-}node_map_cell;
+} NodeMapCell;
 
 // Cell of job_map 
-typedef struct _job_map_cell{
+typedef struct _JobMapCell {
     int job_id;
-    local_resources granted_resources;
-}job_map_cell;
+    LocalResources granted_resources;
+} JobMapCell;
 
 typedef struct _Request {
     int job_id;
@@ -77,8 +77,6 @@ struct epoll_event ev, events[EPOLL_MAX_EVENTS];
 Hashmap node_map, job_map;
 Queue request_queue;
 
-
-
 void error(const char *msg);
 int init_sockets(void);
 int init_agents_socket(void);
@@ -90,9 +88,12 @@ int add_descriptor(int fd);
 void *epoll_handler(void *arg);
 int set_socket_nonblocking(int sock);
 void handle_c_agent(int c_agent_fd);
-char** split(char* buffer, char* splitter, int* length);
-Request parse_request(char** request_fields);
+char **split(char *buffer, char *delimiter, int *length);
+Request parse_request(char **request_fields, int n_fields);
 void process_request(Request req, int fd);
+bool exists_resource(ResourceKind kind, int amount);
+void return_resources(LocalResources resources);
+void increase_resources(LocalResources resources);
 void handle_erlang_client(int erlang_client_fd);
 int close_epoll(void);
 int close_sockets(void);
@@ -264,7 +265,6 @@ void *epoll_handler(void *arg)
 
         for (int i = 0; i < num_fds_ready; ++i) {
             if (events[i].data.fd == listen_public_sock) {
-                // TODO (para equipo): necesitamos saber la información que nos devuelve accept? (1)
                 connect_public_sock = accept(listen_public_sock, NULL, NULL);
                 if (connect_public_sock == -1) {
                     error("Error intentando aceptar un agente");
@@ -278,7 +278,6 @@ void *epoll_handler(void *arg)
                 if (add_descriptor(connect_public_sock) < 0)
                     exit(EXIT_FAILURE);
             } else if (events[i].data.fd == listen_erlang_sock) {
-                // TODO (para equipo): misma pregunta que (1)
                 connect_erlang_sock = accept(listen_erlang_sock, NULL, NULL);
                 if (connect_erlang_sock == -1) {
                     error("Error intentando aceptar un cliente Erlang");
@@ -293,7 +292,8 @@ void *epoll_handler(void *arg)
                     exit(EXIT_FAILURE);
             } else {
                 int client_fd = events[i].data.fd;
-                // DOESNT RESOLVE DEADLOCKS
+
+                // TODO: resolve possible deadlocks
                 if (client_fd == connect_public_sock)
                     handle_c_agent(client_fd);
                 else if (client_fd == connect_erlang_sock)
@@ -314,17 +314,17 @@ int set_socket_nonblocking(int sock)
     return fcntl(sock, F_SETFL, flags);
 }
 
-
-void handle_c_agent(int fd){
+void handle_c_agent(int fd)
+{
     char buffer[BUFFER_MAX_SIZE];
-    memset(buffer,0,BUFFER_MAX_SIZE);
-    ssize_t bytes_read = read(fd,buffer,BUFFER_MAX_SIZE -1);
+    memset(buffer, 0, BUFFER_MAX_SIZE);
+    ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE -1);
     if (bytes_read <= 0);
-        // TO DO (QUE HACER EN CASO DE ERROR)
-    else{
+        // TODO (what do we do in case of error?)
+    else {
         int length = 0;
-        char** request_fields = split(buffer," ",&length);
-        Request request = parse_request(request_fields); // TODO
+        char **request_fields = split(buffer, " ", &length);
+        Request request = parse_request(request_fields, length); // TODO
         process_request(request, fd); // TODO
     }
 }
@@ -343,58 +343,80 @@ char **split(char *text, char *delimiter, int *len)
         result[i++] = tok;
     }
 
-    *len = i - 1;
+    if (len)
+        *len = i - 1;
     return result;
 }
 
 
-Request parse_request(char** request_fields){
+Request parse_request(char **request_fields, int n_fields)
+{
     // TODO
 }
 
 void process_request(Request req, int fd){
     char response_to_agent[128] = {0};
-    switch(req.kind){
-        case REQUEST_KIND_RESERVE:
-        if (hay_recursos(req.res_kind,req.amount)){
-            job_map_cell new_cell;
-            new_cell.granted_resources = (local_resources){0,0,0};
-            switch(req.res_kind){
-                case RES_KIND_CPU:
+    switch (req.kind) {
+    case REQUEST_KIND_RESERVE:
+        if (exists_resource(req.res_kind, req.amount)) {
+            JobMapCell new_cell;
+            new_cell.granted_resources = (LocalResources){0, 0, 0};
+            switch (req.res_kind) {
+            case RES_KIND_CPU:
                 new_cell.granted_resources.cpu += req.amount;
                 break;
-                case RES_KIND_GPU:
+            case RES_KIND_GPU:
                 new_cell.granted_resources.gpu += req.amount;
                 break;
-                case RES_KIND_MEM:
+            case RES_KIND_MEM:
                 new_cell.granted_resources.mem += req.amount;
                 break;
-                default:
+            default:
                 // lol
                 break;
             }
+
             hashmap_put(job_map, &new_cell);
-            liberar_recursos(req.resources);
-            sprintf(response_to_agent,"GRANTED %d",req.job_id);
-            send(fd,response_to_agent,8,0);
-        }
-        else{
-            sprintf(response_to_agent,"DENIED %d",req.job_id);
-            send(fd,response_to_agent,8,0);
-            request_queue = enqueue(request_queue,req);
+
+            // TODO: make a constructor from request to resources (1)
+            return_resources(req.resources);
+            sprintf(response_to_agent, "GRANTED %d", req.job_id);
+            send(fd, response_to_agent, 8, 0);
+        } else {
+            sprintf(response_to_agent, "DENIED %d", req.job_id);
+            send(fd, response_to_agent, 8, 0);
+            request_queue = enqueue(request_queue, req);
         }
         break;
-        case REQUEST_KIND_RELEASE:
-        aumentar_recursos(req.resources);
-        job_map_cell new_cell;
-        // TODO MODIFICAR EL HASHMAP
+    case REQUEST_KIND_RELEASE:
+        // TODO: same as (1)
+        increase_resources(req.resources);
+        JobMapCell new_cell;
+        // TODO: modify job hashmap
         break;
-        default:
+    default:
         break;
     }
 }
 
-void handle_erlang_client(int fd){
+bool exists_resource(ResourceKind kind, int amount)
+{
+    assert(0 && "TODO: exists_resource not implemented");
+    return false;
+}
+
+void return_resources(LocalResources resources)
+{
+    assert(0 && "TODO: return_resources not implemented");
+}
+
+void increase_resources(LocalResources resources)
+{
+    assert(0 && "TODO: increase_resources not implemented");
+}
+
+void handle_erlang_client(int fd)
+{
     // TODO
 }
 
@@ -435,4 +457,3 @@ int cleanup(int flags)
 
     return 1;
 }
-
