@@ -67,7 +67,7 @@ typedef struct _JobMapCell {
 } JobMapCell;
 
 typedef struct _Request {
-    int job_id;
+    long long job_id;
     RequestKind kind;
     ResourceKind res_kind;
     int amount;       
@@ -361,7 +361,8 @@ Request parse_request(char **request_fields, int n_fields)
     else if (streq(req_kind, "RELEASE"))
         req.kind = REQUEST_KIND_RELEASE;
 
-    char *resource_name = request_fields[1];
+    req.job_id = atoll(request_fields[1]);
+    char *resource_name = request_fields[2];
     if (streq(resource_name, "cpu"))
         req.res_kind = RES_KIND_CPU;
     else if (streq(resource_name, "mem"))
