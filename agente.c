@@ -8,7 +8,9 @@
 #include <sys/socket.h>
 #include <sys/epoll.h>
 #include <string.h>
+#include <sys/types.h>
 #include <unistd.h>
+#include "ds/hashmap.h"
 
 #define OK         0
 #define FAIL       -1
@@ -20,12 +22,62 @@
 #define CLEAN_SOCKETS  0b1
 #define CLEAN_EPOLL   0b10
 
+#define MAX_CPU 8
+#define MAX_GPU 4
+#define MAX_MEM 16384
+#define BUFFER_MAX_SIZE 128
+
+typedef enum {
+    REQUEST_KIND_RESERVE = 0,
+    REQUEST_KIND_RELEASE
+} RequestKind;
+
+typedef enum {
+    RES_KIND_CPU = 0,
+    RES_KIND_MEM,
+    RES_KIND_GPU
+}ResourceKind;
+
 // SOCK_STREAM -> TCP
 // SOCK_DGRAM ->  UDP
 
+
+// Local node resources
+typedef struct _local_resources{
+    int cpu;
+    int mem;
+    int gpu;
+}local_resources;
+
+// Cell of node_map
+typedef struct _node_map_cell{
+    int ip;
+    int puerto;
+    local_resources resources;
+    time_t time_when_called;
+}node_map_cell;
+
+// Cell of job_map 
+typedef struct _job_map_cell{
+    int job_id;
+    local_resources granted_resources;
+}job_map_cell;
+
+typedef struct _Request {
+    int job_id;
+    RequestKind kind;
+    ResourceKind res_kind;
+    int amount;       
+} Request;
+
 int listen_public_sock, listen_erlang_sock;
+int connect_public_sock, connect_erlang_sock;
 int epoll_fd, num_fds_ready;
 struct epoll_event ev, events[EPOLL_MAX_EVENTS];
+Hashmap node_map, job_map;
+Queue request_queue;
+
+
 
 void error(const char *msg);
 int init_sockets(void);
@@ -37,6 +89,11 @@ int add_descriptors(void);
 int add_descriptor(int fd);
 void *epoll_handler(void *arg);
 int set_socket_nonblocking(int sock);
+void handle_c_agent(int c_agent_fd);
+char** split(char* buffer, char* splitter, int* length);
+Request parse_request(char** request_fields);
+void process_request(Request req, int fd);
+void handle_erlang_client(int erlang_client_fd);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
@@ -208,7 +265,7 @@ void *epoll_handler(void *arg)
         for (int i = 0; i < num_fds_ready; ++i) {
             if (events[i].data.fd == listen_public_sock) {
                 // TODO (para equipo): necesitamos saber la información que nos devuelve accept? (1)
-                int connect_public_sock = accept(listen_public_sock, NULL, NULL);
+                connect_public_sock = accept(listen_public_sock, NULL, NULL);
                 if (connect_public_sock == -1) {
                     error("Error intentando aceptar un agente");
                     exit(EXIT_FAILURE);
@@ -222,7 +279,7 @@ void *epoll_handler(void *arg)
                     exit(EXIT_FAILURE);
             } else if (events[i].data.fd == listen_erlang_sock) {
                 // TODO (para equipo): misma pregunta que (1)
-                int connect_erlang_sock = accept(listen_erlang_sock, NULL, NULL);
+                connect_erlang_sock = accept(listen_erlang_sock, NULL, NULL);
                 if (connect_erlang_sock == -1) {
                     error("Error intentando aceptar un cliente Erlang");
                     exit(EXIT_FAILURE);
@@ -235,7 +292,12 @@ void *epoll_handler(void *arg)
                 if (add_descriptor(connect_erlang_sock) < 0)
                     exit(EXIT_FAILURE);
             } else {
-                // TODO: process event
+                int client_fd = events[i].data.fd;
+                // DOESNT RESOLVE DEADLOCKS
+                if (client_fd == connect_public_sock)
+                    handle_c_agent(client_fd);
+                else if (client_fd == connect_erlang_sock)
+                    handle_erlang_client(client_fd);
             }
         }
     }
@@ -250,6 +312,90 @@ int set_socket_nonblocking(int sock)
 
     flags |= O_NONBLOCK;
     return fcntl(sock, F_SETFL, flags);
+}
+
+
+void handle_c_agent(int fd){
+    char buffer[BUFFER_MAX_SIZE];
+    memset(buffer,0,BUFFER_MAX_SIZE);
+    ssize_t bytes_read = read(fd,buffer,BUFFER_MAX_SIZE -1);
+    if (bytes_read <= 0);
+        // TO DO (QUE HACER EN CASO DE ERROR)
+    else{
+        int length = 0;
+        char** request_fields = split(buffer," ",&length);
+        Request request = parse_request(request_fields); // TODO
+        process_request(request, fd); // TODO
+    }
+}
+
+char **split(char *text, char *delimiter, int *len)
+{
+    int cap = 32;
+    char **result = malloc(sizeof(char *)*cap);
+
+    char *s2 = strdup(text);
+    char *tok = strtok(s2, delimiter);
+    int i = 0;
+    result[i++] = tok;
+    while (tok) {
+        tok = strtok(NULL, delimiter);
+        result[i++] = tok;
+    }
+
+    *len = i - 1;
+    return result;
+}
+
+
+Request parse_request(char** request_fields){
+    // TODO
+}
+
+void process_request(Request req, int fd){
+    char response_to_agent[128] = {0};
+    switch(req.kind){
+        case REQUEST_KIND_RESERVE:
+        if (hay_recursos(req.res_kind,req.amount)){
+            job_map_cell new_cell;
+            new_cell.granted_resources = (local_resources){0,0,0};
+            switch(req.res_kind){
+                case RES_KIND_CPU:
+                new_cell.granted_resources.cpu += req.amount;
+                break;
+                case RES_KIND_GPU:
+                new_cell.granted_resources.gpu += req.amount;
+                break;
+                case RES_KIND_MEM:
+                new_cell.granted_resources.mem += req.amount;
+                break;
+                default:
+                // lol
+                break;
+            }
+            hashmap_put(job_map, &new_cell);
+            liberar_recursos(req.resources);
+            sprintf(response_to_agent,"GRANTED %d",req.job_id);
+            send(fd,response_to_agent,8,0);
+        }
+        else{
+            sprintf(response_to_agent,"DENIED %d",req.job_id);
+            send(fd,response_to_agent,8,0);
+            request_queue = enqueue(request_queue,req);
+        }
+        break;
+        case REQUEST_KIND_RELEASE:
+        aumentar_recursos(req.resources);
+        job_map_cell new_cell;
+        // TODO MODIFICAR EL HASHMAP
+        break;
+        default:
+        break;
+    }
+}
+
+void handle_erlang_client(int fd){
+    // TODO
 }
 
 int close_epoll(void)
@@ -289,3 +435,4 @@ int cleanup(int flags)
 
     return 1;
 }
+
