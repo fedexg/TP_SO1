@@ -97,6 +97,7 @@ void process_request(Request req, int fd);
 bool exists_resource(ResourceKind kind, int amount);
 void return_resources(LocalResources resources);
 void increase_resources(LocalResources resources);
+LocalResources get_request_resource(Request req);
 void handle_erlang_client(int erlang_client_fd);
 int close_epoll(void);
 int close_sockets(void);
@@ -398,8 +399,7 @@ void process_request(Request req, int fd)
 
             hashmap_put(job_map, &new_cell);
 
-            // TODO: make a constructor from request to resources (1)
-            return_resources(req.resources);
+            return_resources(get_request_resource(req));
             sprintf(response_to_agent, "GRANTED %d", req.job_id);
             send(fd, response_to_agent, 8, 0);
         } else {
@@ -409,8 +409,7 @@ void process_request(Request req, int fd)
         }
         break;
     case REQUEST_KIND_RELEASE:
-        // TODO: same as (1)
-        increase_resources(req.resources);
+        increase_resources(get_request_resource(req.resources));
         JobMapCell new_cell;
         // TODO: modify job hashmap
         break;
@@ -433,6 +432,24 @@ void return_resources(LocalResources resources)
 void increase_resources(LocalResources resources)
 {
     assert(0 && "TODO: increase_resources not implemented");
+}
+
+LocalResources get_request_resource(Request req)
+{
+    LocalResources res = { 0 };
+    switch (req.res_kind) {
+    case RES_KIND_CPU:
+        res.cpu = req.amount;
+        break;
+    case RES_KIND_MEM:
+        res.mem = req.amount;
+        break;
+    case RES_KIND_GPU:
+        res.gpu = req.amount;
+        break;
+    }
+
+    return res;
 }
 
 void handle_erlang_client(int fd)
