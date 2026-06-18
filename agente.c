@@ -370,7 +370,7 @@ Request parse_request(char **request_fields, int n_fields)
     else if (streq(resource_name, "gpu"))
         req.res_kind = RES_KIND_GPU;
 
-    req.amount = atoi(request_fields[2]);
+    req.amount = atoi(request_fields[3]);
 
     return req;
 }
