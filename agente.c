@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+
 #include "ds/hashmap.h"
 
 #define OK         0
@@ -27,6 +28,8 @@
 #define MAX_GPU 4
 #define MAX_MEM 16384
 #define BUFFER_MAX_SIZE 128
+
+#define streq(a, b) (strcmp((a), (b)) == 0)
 
 typedef enum {
     REQUEST_KIND_RESERVE = 0,
@@ -88,7 +91,7 @@ int add_descriptor(int fd);
 void *epoll_handler(void *arg);
 int set_socket_nonblocking(int sock);
 void handle_c_agent(int c_agent_fd);
-char **split(char *buffer, char *delimiter, int *length);
+char **split(char *text, char *delimiter, int *len);
 Request parse_request(char **request_fields, int n_fields);
 void process_request(Request req, int fd);
 bool exists_resource(ResourceKind kind, int amount);
@@ -348,13 +351,30 @@ char **split(char *text, char *delimiter, int *len)
     return result;
 }
 
-
 Request parse_request(char **request_fields, int n_fields)
 {
-    // TODO
+    Request req;
+    char *req_kind = request_fields[0];
+    if (streq(req_kind, "RESERVE"))
+        req.kind = REQUEST_KIND_RESERVE;
+    else if (streq(req_kind, "RELEASE"))
+        req.kind = REQUEST_KIND_RELEASE;
+
+    char *resource_name = request_fields[1];
+    if (streq(resource_name, "cpu"))
+        req.res_kind = RES_KIND_CPU;
+    else if (streq(resource_name, "mem"))
+        req.res_kind = RES_KIND_MEM;
+    else if (streq(resource_name, "gpu"))
+        req.res_kind = RES_KIND_GPU;
+
+    req.amount = atoi(request_fields[2]);
+
+    return req;
 }
 
-void process_request(Request req, int fd){
+void process_request(Request req, int fd)
+{
     char response_to_agent[128] = {0};
     switch (req.kind) {
     case REQUEST_KIND_RESERVE:
