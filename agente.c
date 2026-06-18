@@ -78,6 +78,7 @@ int listen_public_sock, listen_erlang_sock;
 int connect_public_sock, connect_erlang_sock;
 int epoll_fd, num_fds_ready;
 struct epoll_event ev, events[EPOLL_MAX_EVENTS];
+LocalResources node_resources;
 Hashmap node_map, job_map;
 Queue request_queue;
 
@@ -104,7 +105,6 @@ void handle_erlang_client(int erlang_client_fd);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
-
 
 int main()
 {
@@ -384,26 +384,36 @@ void process_request(Request req, int fd)
     switch (req.kind) {
     case REQUEST_KIND_RESERVE:
         if (exists_resource(req.res_kind, req.amount)) {
-            JobMapCell new_cell;
-            new_cell.granted_resources = (LocalResources){0, 0, 0};
+            JobMapCell *cell = hashmap_search(job_map, &req.job_id);
+
+            // We didn't find a cell with this job id. We create it.
+            if (cell == NULL)
+                cell = calloc(1, sizeof(JobMapCell));
+
+            // 1001 {cpu 1, mem 0, gpu 0}
+            // RESERVE 1001 gpu 1 (r)
+            // cell = r
+            // Request {REQUEST_KIND_RESERVE, <job_id>, RES_KIND_GPU, 1};
+            // cell->granted_resources.gpu += 1
+            // hashmap_put(hm, cell)
+            // 1001 {cpu 1, mem 0, gpu 1}
             switch (req.res_kind) {
             case RES_KIND_CPU:
-                new_cell.granted_resources.cpu += req.amount;
+                cell->granted_resources.cpu += req.amount;
                 break;
             case RES_KIND_GPU:
-                new_cell.granted_resources.gpu += req.amount;
+                cell->granted_resources.gpu += req.amount;
                 break;
             case RES_KIND_MEM:
-                new_cell.granted_resources.mem += req.amount;
+                cell->granted_resources.mem += req.amount;
                 break;
             default:
                 // lol
                 break;
             }
 
-            hashmap_put(job_map, &new_cell);
-
-            return_resources(get_request_resource(req));
+            hashmap_put(job_map, &cell);
+            return_resources(req.kind, req.amount);
             sprintf(response_to_agent, "GRANTED %lld", req.job_id);
             send(fd, response_to_agent, 8, 0);
         } else {
@@ -413,9 +423,22 @@ void process_request(Request req, int fd)
         }
         break;
     case REQUEST_KIND_RELEASE:
-        increase_resources(get_request_resource(req));
-        //JobMapCell new_cell;
-        // TODO: modify job hashmap
+        increase_resources(req.kind, req.amount);
+        JobMapCell *cell = hashmap_search(job_map, &req.job_id);
+
+        // Cell not found, therefore no job with that id was found.
+        if (cell == NULL) {
+            sprintf(response_to_agent, "DENIED %lld", req.job_id);
+            send(fd, response_to_agent, 8, 0);
+        }
+
+        // TODO: modify based on kind (subtract)
+        switch (req.kind) {
+        default:
+            break;
+        }
+
+        hashmap_put(job_map, &cell);
         break;
     default:
         break;
@@ -424,18 +447,58 @@ void process_request(Request req, int fd)
 
 bool exists_resource(ResourceKind kind, int amount)
 {
-    assert(0 && "TODO: exists_resource not implemented");
+    switch (kind) {
+    case RES_KIND_CPU:
+        if (node_resources.cpu >= amount)
+            return true;
+        break;
+    case RES_KIND_MEM:
+        if (node_resources.mem >= amount)
+            return true;
+        break;
+    case RES_KIND_GPU:
+        if (node_resources.gpu >= amount)
+            return true;
+        break;
+    default:
+        break;
+    }
+
     return false;
 }
 
-void return_resources(LocalResources resources)
+void return_resources(ResourceKind kind, int amount)
 {
-    assert(0 && "TODO: return_resources not implemented");
+    switch (kind) {
+    case RES_KIND_CPU:
+        node_resources.cpu -= amount;
+        break;
+    case RES_KIND_MEM:
+        node_resources.mem -= amount;
+        break;
+    case RES_KIND_GPU:
+        node_resources.gpu -= amount;
+        break;
+    default:
+        break;
+    }
 }
 
-void increase_resources(LocalResources resources)
+void increase_resources(ResourceKind kind, int amount)
 {
-    assert(0 && "TODO: increase_resources not implemented");
+    switch (kind) {
+    case RES_KIND_CPU:
+        node_resources.cpu += amount;
+        break;
+    case RES_KIND_MEM:
+        node_resources.mem += amount;
+        break;
+    case RES_KIND_GPU:
+        node_resources.gpu += amount;
+        break;
+    default:
+        break;
+    }
 }
 
 LocalResources get_request_resource(Request req)
