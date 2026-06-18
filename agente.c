@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "ds/hashmap.h"
+#include "ds/queue.h"
 
 #define OK         0
 #define FAIL       -1
@@ -98,10 +99,12 @@ bool exists_resource(ResourceKind kind, int amount);
 void return_resources(LocalResources resources);
 void increase_resources(LocalResources resources);
 LocalResources get_request_resource(Request req);
+Request *request_dup(Request *req);
 void handle_erlang_client(int erlang_client_fd);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
+
 
 int main()
 {
@@ -401,17 +404,17 @@ void process_request(Request req, int fd)
             hashmap_put(job_map, &new_cell);
 
             return_resources(get_request_resource(req));
-            sprintf(response_to_agent, "GRANTED %d", req.job_id);
+            sprintf(response_to_agent, "GRANTED %lld", req.job_id);
             send(fd, response_to_agent, 8, 0);
         } else {
-            sprintf(response_to_agent, "DENIED %d", req.job_id);
+            sprintf(response_to_agent, "DENIED %lld", req.job_id);
             send(fd, response_to_agent, 8, 0);
-            request_queue = enqueue(request_queue, req);
+            request_queue = enqueue(request_queue, &req, (QueueCpyFunc)request_dup);
         }
         break;
     case REQUEST_KIND_RELEASE:
-        increase_resources(get_request_resource(req.resources));
-        JobMapCell new_cell;
+        increase_resources(get_request_resource(req));
+        //JobMapCell new_cell;
         // TODO: modify job hashmap
         break;
     default:
@@ -451,6 +454,17 @@ LocalResources get_request_resource(Request req)
     }
 
     return res;
+}
+
+Request *request_dup(Request *req)
+{
+    Request *cloned = malloc(sizeof(Request));
+    cloned->job_id = req->job_id;
+    cloned->kind = req->kind;
+    cloned->res_kind = req->res_kind;
+    cloned->amount = req->amount;
+
+    return cloned;
 }
 
 void handle_erlang_client(int fd)
