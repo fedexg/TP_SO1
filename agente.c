@@ -31,10 +31,11 @@
 #include "ds/hashmap.h"
 #include "ds/queue.h"
 
-#define OK          0
-#define FAIL        -1
-#define UDP_PORT    12529
-#define ERLANG_PORT 1337
+#define OK           0
+#define FAIL         -1
+#define UDP_PORT     12529
+#define ERLANG_PORT  1337
+#define DEFAULT_PORT 8080
 
 #define EPOLL_MAX_EVENTS     10
 #define EPOLL_TIMEOUT        -1
@@ -66,6 +67,10 @@ typedef enum {
 
 // Local node resources
 typedef struct _LocalResources {
+    int current_cpu;
+    int current_mem;
+    int current_gpu;
+
     int cpu;
     int mem;
     int gpu;
@@ -89,11 +94,16 @@ typedef struct _NodeMapCell {
 
 // Cell of job_map 
 typedef struct _JobMapCell {
-    int job_id;
+    long long job_id;
     int num_remotely_allocated;
     RemoteAllocation *remote_allocations; // array of all the remotely allocated resources
     LocalResources granted_resources;
 } JobMapCell;
+
+typedef struct JobQueueNode {
+    JobMapCell job_cell;
+    time_t time_when_alloc;
+} JobQueueNode;
 
 typedef struct _Request {
     long long job_id;
@@ -110,10 +120,16 @@ int epoll_fd, num_fds_ready;
 int agent_port;
 static int seconds_passed = 0;
 struct epoll_event ev, events[EPOLL_MAX_EVENTS];
+int cluster_cpu, cluster_mem, cluster_gpu;
 LocalResources node_resources;
 Hashmap node_map, job_map;
-Queue request_queue;
+Queue job_queue;
 
+// Job queue information
+JobQueueNode *job_copy(JobQueueNode *j);
+void job_free(JobQueueNode *j);
+
+// General functions
 void error(const char *msg);
 int init_sockets(void);
 int init_agents_socket(void);
@@ -150,6 +166,7 @@ void handle_udp_packet(int udp_fd);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
+LocalResources get_initial_resources(void);
 
 int main(int argc, char **argv)
 {
@@ -183,6 +200,28 @@ int main(int argc, char **argv)
         return 1;
 
     return 0;
+}
+
+JobQueueNode *job_copy(JobQueueNode *j)
+{
+    long long job_id = j->job_cell.job_id;
+    int num_remotely_allocated = j->job_cell.num_remotely_allocated;
+    RemoteAllocation *remote_allocations = j->job_cell.remote_allocations;
+    time_t time_when_alloc = j->time_when_alloc;
+
+    JobQueueNode *cloned = malloc(sizeof(JobQueueNode));
+    cloned->job_cell.job_id = job_id;
+    cloned->job_cell.num_remotely_allocated = num_remotely_allocated;
+    cloned->job_cell.remote_allocations = calloc(num_remotely_allocated, sizeof(RemoteAllocation));
+    memcpy(cloned->job_cell.remote_allocations, remote_allocations, num_remotely_allocated);
+    cloned->time_when_alloc = time_when_alloc;
+    return cloned;
+}
+
+void job_free(JobQueueNode *j)
+{
+    free(j->job_cell.remote_allocations);
+    free(j);
 }
 
 void error(const char *msg)
@@ -382,7 +421,7 @@ void send_udp_announce(void)
     struct sockaddr_in sa_broadcast;
     memset(&sa_broadcast, 0, sizeof(sa_broadcast));
     sa_broadcast.sin_family = AF_INET;
-    sa_broadcast.sin_port = htons(PORT);
+    sa_broadcast.sin_port = htons(agent_port);
     sa_broadcast.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 
     char my_ip[64];
@@ -391,7 +430,7 @@ void send_udp_announce(void)
 
     char buffer[BUFFER_MAX_SIZE] = { 0 };
     sprintf(buffer, "ANNOUNCE %s %d cpu:%d mem:%d gpu:%d",
-            my_ip, PORT,
+            my_ip, agent_port,
             node_resources.cpu,
             node_resources.mem,
             node_resources.gpu);
@@ -612,22 +651,22 @@ void process_request(Request req, int fd)
             if (cell == NULL)
                 cell = calloc(1, sizeof(JobMapCell));
 
-            // 1001 {cpu 1, mem 0, gpu 0}
-            // RESERVE 1001 gpu 1 (r)
+            // 1001 {current_cpu 1, current_mem 0, current_gpu 0}
+            // RESERVE 1001 current_gpu 1 (r)
             // cell = r
             // Request {REQUEST_KIND_RESERVE, <job_id>, RES_KIND_GPU, 1};
-            // cell->granted_resources.gpu += 1
+            // cell->granted_resources.current_gpu += 1
             // hashmap_put(hm, cell)
-            // 1001 {cpu 1, mem 0, gpu 1}
+            // 1001 {current_cpu 1, current_mem 0, current_gpu 1}
             switch (req.res_kind) {
             case RES_KIND_CPU:
-                cell->granted_resources.cpu += req.amount;
+                cell->granted_resources.current_cpu += req.amount;
                 break;
             case RES_KIND_GPU:
-                cell->granted_resources.gpu += req.amount;
+                cell->granted_resources.current_gpu += req.amount;
                 break;
             case RES_KIND_MEM:
-                cell->granted_resources.mem += req.amount;
+                cell->granted_resources.current_mem += req.amount;
                 break;
             default:
                 // lol
@@ -641,7 +680,6 @@ void process_request(Request req, int fd)
         } else {
             sprintf(response_to_agent, "DENIED %lld", req.job_id);
             send(fd, response_to_agent, 8, 0);
-            request_queue = enqueue(request_queue, &req, (QueueCpyFunc)request_dup);
         }
 
         break;
@@ -659,21 +697,20 @@ void process_request(Request req, int fd)
 
         switch (req.res_kind) {
         case RES_KIND_CPU:
-            cell->granted_resources.cpu -= req.amount;
+            cell->granted_resources.current_cpu -= req.amount;
             break;
         case RES_KIND_GPU:
-            cell->granted_resources.gpu -= req.amount;
+            cell->granted_resources.current_gpu -= req.amount;
             break;
         case RES_KIND_MEM:
-            cell->granted_resources.mem -= req.amount;
+            cell->granted_resources.current_mem -= req.amount;
             break;
         default:
-            // lol
             break;
         }
 
-        if (cell->granted_resources.cpu == 0 && cell->granted_resources.gpu == 0 &&
-            cell->granted_resources.mem) {
+        if (cell->granted_resources.current_cpu == 0 && cell->granted_resources.current_gpu == 0 &&
+            cell->granted_resources.current_mem) {
             hashmap_delete(job_map,&req.job_id);
             free(cell);
         } else
@@ -690,15 +727,15 @@ bool exists_resource(ResourceKind kind, int amount)
 {
     switch (kind) {
     case RES_KIND_CPU:
-        if (node_resources.cpu >= amount)
+        if (node_resources.current_cpu >= amount)
             return true;
         break;
     case RES_KIND_MEM:
-        if (node_resources.mem >= amount)
+        if (node_resources.current_mem >= amount)
             return true;
         break;
     case RES_KIND_GPU:
-        if (node_resources.gpu >= amount)
+        if (node_resources.current_gpu >= amount)
             return true;
         break;
     default:
@@ -713,13 +750,13 @@ void give_resources(ResourceKind kind, int amount)
 {
     switch (kind) {
     case RES_KIND_CPU:
-        node_resources.cpu -= amount;
+        node_resources.current_cpu -= amount;
         break;
     case RES_KIND_MEM:
-        node_resources.mem -= amount;
+        node_resources.current_mem -= amount;
         break;
     case RES_KIND_GPU:
-        node_resources.gpu -= amount;
+        node_resources.current_gpu -= amount;
         break;
     default:
         break;
@@ -731,13 +768,13 @@ void increase_resources(ResourceKind kind, int amount)
 {
     switch (kind) {
     case RES_KIND_CPU:
-        node_resources.cpu += amount;
+        node_resources.current_cpu += amount;
         break;
     case RES_KIND_MEM:
-        node_resources.mem += amount;
+        node_resources.current_mem += amount;
         break;
     case RES_KIND_GPU:
-        node_resources.gpu += amount;
+        node_resources.current_gpu += amount;
         break;
     default:
         break;
@@ -771,13 +808,9 @@ void handle_erlang_client(int fd)
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
 
-        if (streq(request_fields[0], "JOB_REQUEST")) {
+        if (streq(request_fields[0], "JOB_REQUEST"))
             handle_job_request(request_fields, length, fd);
-
-            //char granted_buffer[BUFFER_MAX_SIZE] = { 0 };
-            //sprintf(granted_buffer, "GRANTED %lld", atoi(request_fields[1]));
-            //send(fd, granted_buffer, strlen(granted_buffer), 0);
-        } else if (streq(request_fields[0], "JOB_RELEASE"))
+        else if (streq(request_fields[0], "JOB_RELEASE"))
             handle_job_release(request_fields, fd);
         else if (streq(request_fields[0], "JOB_STATUS"))
             handle_job_status(request_fields, fd);
@@ -795,10 +828,59 @@ void handle_erlang_client(int fd)
 // Handles an incoming job request from the erlang client
 void handle_job_request(char **request_fields, int request_fields_size, int fd)
 {
+    // ["JOB_REQUEST" "1001" "@host:res:amount" "@host:res:amount"]
+
+    char msg[BUFFER_MAX_SIZE] = { 0 };
     long long job_id = atoll(request_fields[1]);
     int len = 0;
     NodeMapCell *parsed = parse_erlang_request(request_fields, request_fields_size, fd, &len);
+    LocalResources res = get_initial_resources();
 
+    int cpu = 0, mem = 0, gpu = 0;
+
+    // Gather total resources from request to determine response
+    for (int i = 0; i < len; ++i) {
+        char **resource_fields = split(request_fields[i+2], ":", NULL);
+
+        char resource[4] = { 0 };
+        strcpy(resource, resource_fields[1]);
+        int amount = atoi(resource_fields[2]);
+
+        if (streq(resource, "cpu"))
+            cpu += amount;
+        if (streq(resource, "mem"))
+            mem += amount;
+        if (streq(resource, "gpu"))
+            gpu += amount;
+
+        free(resource_fields);
+    }
+
+    // Total amount of resources exceeds any resource that the
+    // cluster had in the first place. Therefore, job is impossible
+    // and we answer a TIMEOUT
+    if (cpu > res.cpu || mem > res.mem || gpu > res.gpu) {
+        memset(msg, 0, BUFFER_MAX_SIZE - 1);
+        sprintf(msg, "JOB_TIMEOUT %lld", job_id);
+        send(fd, msg, strlen(msg), 0);
+        return;
+    }
+
+    if (cpu > res.current_cpu || mem > res.current_mem || gpu > res.current_gpu) {
+        memset(msg, 0, BUFFER_MAX_SIZE - 1);
+        sprintf(msg, "JOB_DENIED %lld", job_id);
+        send(fd, msg, strlen(msg), 0);
+
+        JobQueueNode job = {
+            (JobMapCell){ job_id, 0, NULL, (LocalResources){ 0 } },
+            time(NULL)
+        };
+
+        enqueue(job_queue, &job, (QueueCpyFunc)job_copy);
+        return;
+    }
+
+    // Ask agents for what we need
     for (int i = 0; i < len; ++i) {
         int agent_fd = get_agent_connection(&parsed[i]);
         if (agent_fd == -1) {
@@ -833,23 +915,22 @@ void handle_job_request(char **request_fields, int request_fields_size, int fd)
         //      4096     [2]
         //  }
         // }
-        find_requested_parameters(request_fields + 2, request_fields_size - 2, resource, &amount);
+
+        char **resource_fields = split(request_fields[i+2], ":", NULL);
+        strcpy(resource, resource_fields[1]);
+        amount = atoi(resource_fields[2]);
 
         // Send RESERVE message based on what we found
         sprintf(msg, "RESERVE %lld %s %d", job_id, resource, amount);
         send(agent_fd, msg, strlen(msg), 0);
+        free(resource_fields);
     }
+
+    memset(msg, 0, BUFFER_MAX_SIZE - 1);
+    sprintf(msg, "JOB_GRANTEED %lld", job_id);
+    send(fd, msg, strlen(msg), 0);
 
     free(parsed);
-}
-
-void find_requested_parameters(char **request_fields, int request_fields_size, char *resource, int *amount)
-{
-    for (int i = 0; i < request_fields_size; ++i) {
-        char **resource_fields = split(request_fields[i], ":", NULL);
-        strcpy(resource, resource_fields[1]);
-        *amount = atoi(resource_fields[2]);
-    }
 }
 
 // Parses a request with the form JOB_REQUEST <job_id> [@ip:res:amount ... ]
@@ -862,17 +943,17 @@ NodeMapCell *parse_erlang_request(char **request_fields, int request_fields_size
 
     // Read starting from the array of nodes
     for (int i = 2; i < request_fields_size; ++i) {
-        // TODO: any way to get the port?
         char **node_information = split(request_fields[i], ":", NULL);
         nodes[nodes_len].ip = strdup(node_information[0] + 1);
+        nodes[nodes_len].port = agent_port;
         nodes[nodes_len].socket_fd = fd;
 
         if (streq(node_information[1], "cpu"))
-            nodes[nodes_len].resources.cpu = atoi(node_information[2]);
+            nodes[nodes_len].resources.current_cpu = atoi(node_information[2]);
         else if (streq(node_information[1], "mem"))
-            nodes[nodes_len].resources.mem = atoi(node_information[2]);
+            nodes[nodes_len].resources.current_mem = atoi(node_information[2]);
         else if (streq(node_information[1], "gpu"))
-            nodes[nodes_len].resources.gpu = atoi(node_information[2]);
+            nodes[nodes_len].resources.current_gpu = atoi(node_information[2]);
 
         free(node_information);
         ++nodes_len;
@@ -899,35 +980,40 @@ void handle_job_release(char **request_fields, int fd)
         return;
     }
 
-    increase_resources(RES_KIND_CPU, cell->granted_resources.cpu);
-    increase_resources(RES_KIND_GPU, cell->granted_resources.gpu);
-    increase_resources(RES_KIND_MEM, cell->granted_resources.mem);
+    increase_resources(RES_KIND_CPU, cell->granted_resources.current_cpu);
+    increase_resources(RES_KIND_GPU, cell->granted_resources.current_gpu);
+    increase_resources(RES_KIND_MEM, cell->granted_resources.current_mem);
 
     // Iterate over remotely allocated resources
     for (int i = 0; i < cell->num_remotely_allocated; i++) {
         RemoteAllocation remote = cell->remote_allocations[i];
-        if (remote.resources.cpu > 0)
-            send_release_to_agent(remote.ip, job_id, "cpu", remote.resources.cpu);
-        if (remote.resources.gpu > 0)
-            send_release_to_agent(remote.ip, job_id, "gpu", remote.resources.gpu);
-        if (remote.resources.mem > 0)
-            send_release_to_agent(remote.ip, job_id, "mem", remote.resources.mem);
+        if (remote.resources.current_cpu > 0)
+            send_release_to_agent(remote.ip, job_id, "cpu", remote.resources.current_cpu);
+        if (remote.resources.current_gpu > 0)
+            send_release_to_agent(remote.ip, job_id, "gpu", remote.resources.current_gpu);
+        if (remote.resources.current_mem > 0)
+            send_release_to_agent(remote.ip, job_id, "mem", remote.resources.current_mem);
     }
 
     free(cell->remote_allocations);
     hashmap_delete(job_map, &job_id);
-
-    // TODO: HAY QUE RESPONDERLE A ERLANG??
 }
 
 // Handles an incoming job status from the erlang client
-// TIMEOUT -> ?????
-// GRANTED -> Estan los recursos disponibles (EN TODA LA RED) para que haga el job
-// DENIED -> TODO
+// TIMEOUT -> Solucionar deadlocks; nos llega un RELEASE...?
+// GRANTED -> Está en job_map
+// DENIED ->  Está en la cola ( CC ) (esperando a ser atendido) 
 // IMPLEMENTACION: QUIEN SABE
 void handle_job_status(char **request_fields, int fd)
 {
-    // TODO: wtf???
+    long long job_id = atoll(request_fields[1]);
+    JobMapCell *job = hashmap_search(job_map, &job_id);
+
+    if (job != NULL) {
+        char buffer[BUFFER_MAX_SIZE] = { 0 };
+        sprintf(buffer, "GRANTED %lld", job_id);
+        send(fd, buffer, strlen(buffer), 0);
+    }
 }
 
 // Handles an incoming get nodes from the erlang client
@@ -1132,4 +1218,25 @@ int cleanup(int flags)
             return 1;
 
     return 1;
+}
+
+LocalResources get_initial_resources(void)
+{
+    LocalResources res = { 0 };
+    for (int i = 0; i < node_map->cap; ++i) {
+        bool exists_item = node_map->items[i].data != NULL &&
+                            !node_map->items[i].deleted;
+        if (exists_item) {
+            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
+            res.cpu = node->resources.cpu;
+            res.mem = node->resources.mem;
+            res.gpu = node->resources.gpu;
+
+            res.current_cpu = node->resources.current_cpu;
+            res.current_mem = node->resources.current_mem;
+            res.current_gpu = node->resources.current_gpu;
+        }
+    }
+
+    return res;
 }
