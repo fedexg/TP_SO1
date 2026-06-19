@@ -4,7 +4,6 @@
 //   de tipo SIGPIPE. y nada, eso es lo que tenemos que usar para manejar la
 //   desconexion inesperada. Tenemos que cacheaar usando signal a SIGPIPE y
 //   hacer algo)
-// - implement handle_job_status
 // - deadlock prevention (timeouts, timerfd)
 // - handle enqueued requests when REQUEST_KIND_RELEASE (tener una cola que guarde
 //   requests completas, fijarnos si hay recursos para el request y fijarse si
@@ -124,6 +123,7 @@ int cluster_cpu, cluster_mem, cluster_gpu;
 LocalResources node_resources;
 Hashmap node_map, job_map;
 Queue job_queue;
+List timed_out_jobs;
 
 // Job queue information
 JobQueueNode *job_copy(JobQueueNode *j);
@@ -1000,20 +1000,25 @@ void handle_job_release(char **request_fields, int fd)
 }
 
 // Handles an incoming job status from the erlang client
-// TIMEOUT -> Solucionar deadlocks; nos llega un RELEASE...?
-// GRANTED -> Está en job_map
-// DENIED ->  Está en la cola ( CC ) (esperando a ser atendido) 
-// IMPLEMENTACION: QUIEN SABE
 void handle_job_status(char **request_fields, int fd)
 {
     long long job_id = atoll(request_fields[1]);
     JobMapCell *job = hashmap_search(job_map, &job_id);
+    char buffer[BUFFER_MAX_SIZE] = { 0 };
 
     if (job != NULL) {
-        char buffer[BUFFER_MAX_SIZE] = { 0 };
-        sprintf(buffer, "GRANTED %lld", job_id);
-        send(fd, buffer, strlen(buffer), 0);
+        memset(buffer, 0, BUFFER_MAX_SIZE - 1);
+        sprintf(buffer, "JOB_GRANTED %lld", job_id);
+    } else if (find_in_queue(job_queue, job_id)) {
+        memset(buffer, 0, BUFFER_MAX_SIZE - 1);
+        sprintf(buffer, "JOB_DENIED %lld", job_id);
+    } else if (find_in_list(timed_out_jobs, job_id)) {
+        memset(buffer, 0, BUFFER_MAX_SIZE - 1);
+        sprintf(buffer, "JOB_TIMEOUT %lld", job_id);
+        delete_from_timed_out_jobs(job_id);
     }
+
+    send(fd, buffer, strlen(buffer), 0);
 }
 
 // Handles an incoming get nodes from the erlang client
