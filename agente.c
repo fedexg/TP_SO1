@@ -1,9 +1,4 @@
 // TODO LIST
-// - handle unexpected disconnections using SIGPIPE (cuando te intentas
-//   conectar con TCP a algo y ese algo dejo de existir, te manda un error
-//   de tipo SIGPIPE. y nada, eso es lo que tenemos que usar para manejar la
-//   desconexion inesperada. Tenemos que cacheaar usando signal a SIGPIPE y
-//   hacer algo)
 // - deadlock prevention (timeouts, timerfd)
 // - handle enqueued requests when REQUEST_KIND_RELEASE (tener una cola que guarde
 //   requests completas, fijarnos si hay recursos para el request y fijarse si
@@ -23,6 +18,7 @@
 #include <sys/epoll.h>
 #include <string.h>
 #include <sys/types.h>
+#include <signal.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
 #include <time.h>
@@ -130,6 +126,7 @@ JobQueueNode *job_copy(JobQueueNode *j);
 void job_free(JobQueueNode *j);
 
 // General functions
+void sigpipe_handler(int s);
 void error(const char *msg);
 int init_sockets(void);
 int init_agents_socket(void);
@@ -145,6 +142,7 @@ int add_descriptor(int fd);
 void *epoll_handler(void *arg);
 int set_socket_nonblocking(int sock);
 void handle_c_agent(int c_agent_fd);
+void handle_unexpected_disconnection(int fd);
 char **split(char *text, char *delimiter, int *len);
 Request parse_request(char **request_fields, int n_fields);
 void process_request(Request req, int fd);
@@ -170,6 +168,8 @@ LocalResources get_initial_resources(void);
 
 int main(int argc, char **argv)
 {
+    signal(SIGPIPE, SIG_IGN);
+
     if (argc < 2)
         agent_port = DEFAULT_PORT;
     else
@@ -583,6 +583,9 @@ void handle_c_agent(int fd)
             return;
 
         error("Error intentando leer de un agente de C");
+
+        handle_unexpected_disconnection(fd);
+
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
         close(fd);
     } else {
@@ -592,6 +595,87 @@ void handle_c_agent(int fd)
         process_request(request, fd);
         free(request_fields);
     }
+}
+
+void handle_unexpected_disconnection(int fd)
+{
+    NodeMapCell *dead_node = NULL;
+
+    // 1. Buscar qué nodo en el node_map coincide con el fd_muerto
+    for (int i = 0; i < node_map->cap; ++i) {
+        bool exists_item = node_map->items[i].data != NULL && !node_map->items[i].deleted;
+        if (exists_item) {
+            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
+            if (node->socket_fd == fd) {
+                dead_node = node;
+                break;
+            }
+        }
+    }
+
+    if (dead_node == NULL)
+        return;
+
+    // 2. Recorrer el job_map para limpiar los trabajos afectados
+    for (int i = 0; i < job_map->cap; ++i) {
+        bool exists_job = job_map->items[i].data != NULL && !job_map->items[i].deleted;
+        if (exists_job) {
+            JobMapCell *job = (JobMapCell *)job_map->items[i].data;
+            bool affected_job = false;
+
+            // Primero vemos si este Job usaba al nodo que se murió
+            for (int j = 0; j < job->num_remotely_allocated; ++j) {
+                RemoteAllocation *remote = &job->remote_allocations[j];
+                if (streq(remote->ip, dead_node->ip) &&
+                        ((remote->resources.current_cpu > 0) ||
+                        (remote->resources.current_mem > 0)  ||
+                        (remote->resources.current_gpu > 0))) {
+                    affected_job = true;
+                    break;
+                }
+            }
+
+            // Si el Job dependía del nodo muerto, el Job fracasa.
+            // Debemos devolverle los recursos a todos los DEMÁS nodos que aportaron a este Job.
+            if (affected_job) {
+                // A) DEVOLVER A OTROS NODOS REMOTOS
+                for (int j = 0; j < job->num_remotely_allocated; ++j) {
+                    RemoteAllocation *remote = &job->remote_allocations[j];
+
+                    // Si es el nodo muerto, no le devolvemos nada.
+                    // Pero si es OTRO nodo remoto, le reintegramos sus recursos en el node_map
+                    if (!streq(remote->ip, dead_node->ip)) {
+                        // Buscamos al nodo sobreviviente en el node_map para sumarle sus recursos
+                        NodeMapCell *alive_node = hashmap_search(node_map, &remote->ip);
+                        if (alive_node != NULL) {
+                            alive_node->resources.current_cpu += remote->resources.current_cpu;
+                            alive_node->resources.current_mem += remote->resources.current_mem;
+                            alive_node->resources.current_gpu += remote->resources.current_gpu;
+                        }
+                    }
+
+                    // Limpiamos la asignación remota del Job
+                    memset(&remote->resources, 0, sizeof(LocalResources));
+                }
+
+                if (job->granted_resources.current_cpu > 0)
+                    give_resources(RES_KIND_CPU, job->granted_resources.current_cpu);
+                if (job->granted_resources.current_mem > 0)
+                    give_resources(RES_KIND_MEM, job->granted_resources.current_mem);
+                if (job->granted_resources.current_gpu > 0)
+                    give_resources(RES_KIND_GPU, job->granted_resources.current_gpu);
+
+                // C) BORRAR EL JOB AFECTADO
+                long long id_a_borrar = job->job_id;
+                free(job->remote_allocations);
+                hashmap_delete(job_map, &id_a_borrar);
+            }
+        }
+    }
+
+    // 3. Finalmente, borramos al nodo muerto del mapa de nodos y liberamos su memoria
+    hashmap_delete(node_map, &dead_node->ip);
+    free(dead_node);
 }
 
 // Given a string text and a delimiter, splits the string and stores in len the length of the char** it returns
