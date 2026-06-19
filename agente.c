@@ -1,6 +1,4 @@
 // TODO LIST
-// - implement startup
-// - UDP socket broadcast
 // - handle unexpected disconnections using SIGPIPE (cuando te intentas
 //   conectar con TCP a algo y ese algo dejo de existir, te manda un error
 //   de tipo SIGPIPE. y nada, eso es lo que tenemos que usar para manejar la
@@ -16,6 +14,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -25,6 +25,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "ds/hashmap.h"
 #include "ds/queue.h"
@@ -33,8 +34,9 @@
 #define FAIL       -1
 #define PORT       12529
 
-#define EPOLL_MAX_EVENTS 10
-#define EPOLL_TIMEOUT -1
+#define EPOLL_MAX_EVENTS     10
+#define EPOLL_TIMEOUT        -1
+#define EPOLL_SHORT_TIMEOUT 500
 
 #define CLEAN_SOCKETS  0b1
 #define CLEAN_EPOLL   0b10
@@ -100,6 +102,7 @@ typedef struct _Request {
 
 int listen_public_sock, listen_erlang_sock;
 int connect_public_sock, connect_erlang_sock;
+int udp_broadcast_sock;
 int epoll_fd, num_fds_ready;
 struct epoll_event ev, events[EPOLL_MAX_EVENTS];
 LocalResources node_resources;
@@ -110,8 +113,11 @@ void error(const char *msg);
 int init_sockets(void);
 int init_agents_socket(void);
 int init_listen_erlang_socket(void);
+int init_udp_socket(void);
 int init_epoll(void);
 int startup(void);
+void send_udp_announce(void);
+int get_local_ip(char *ip_buffer, int buffer_size);
 int add_descriptors(void);
 int add_descriptor(int fd);
 void *epoll_handler(void *arg);
@@ -133,6 +139,7 @@ void handle_job_status(char **request_fields, int fd);
 void handle_get_nodes(char **request_fields, int fd);
 void send_release_to_agent(const char *agent_ip, long long job_id, const char *resource, int amount);
 int get_agent_connection(NodeMapCell *node);
+void handle_udp_packet(int udp_fd);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
@@ -180,6 +187,9 @@ int init_sockets(void)
     if (init_listen_erlang_socket() < 0)
         return FAIL;
 
+    if (init_udp_socket() < 0)
+        return FAIL;
+
     return OK;
 }
 
@@ -196,6 +206,7 @@ int init_agents_socket(void)
     // Set agent sockets to be reused
     if (setsockopt(listen_public_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket público para ser reusado");
+        close(listen_public_sock);
         return FAIL;
     }
 
@@ -208,11 +219,13 @@ int init_agents_socket(void)
 
     if (bind(listen_public_sock, (struct sockaddr *)&sa_public, sizeof(sa_public)) < 0) {
         error("Error intentando asignar una dirección al socket público");
+        close(listen_public_sock);
         return FAIL;
     }
 
     if (listen(listen_public_sock, 10) < 0) {
         error("Error intentando setear el socket público para escuchar");
+        close(listen_public_sock);
         return FAIL;
     }
 
@@ -222,7 +235,6 @@ int init_agents_socket(void)
 // Initializes the erlang planner socket
 int init_listen_erlang_socket(void)
 {
-    // yeses the yes
     int yes = 1;
     listen_erlang_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_erlang_sock < 0) {
@@ -233,6 +245,7 @@ int init_listen_erlang_socket(void)
     // Set erlang sockets to be reused
     if (setsockopt(listen_erlang_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket de Erlang para ser reusado");
+        close(listen_erlang_sock);
         return FAIL;
     }
 
@@ -245,14 +258,48 @@ int init_listen_erlang_socket(void)
 
     if (bind(listen_erlang_sock, (struct sockaddr *)&sa_erlang, sizeof(sa_erlang)) < 0) {
         error("Error intentando asignar una dirección al socket de Erlang");
+        close(listen_erlang_sock);
         return FAIL;
     }
 
     if (listen(listen_erlang_sock, 10) < 0) {
         error("Error intentando setear el socket Erlang para escuchar");
+        close(listen_erlang_sock);
         return FAIL;
     }
 
+    return OK;
+}
+
+int init_udp_socket(void)
+{
+    int yes = 1;
+    udp_broadcast_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp_broadcast_sock < 0) {
+        error("Error intentando iniciar el socket UDP");
+        return FAIL;
+    }
+
+    // Give permission to be a broadcast socket
+    if (setsockopt(udp_broadcast_sock, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes)) < 0) {
+        error("No se pudo configurar el socket de UDP para permitir broadcast");
+        return FAIL;
+    }
+
+    // Bind to any address found
+    struct sockaddr_in sa_udp;
+    memset(&sa_udp, 0, sizeof(sa_udp));
+    sa_udp.sin_family = AF_INET;
+    sa_udp.sin_port = htons(PORT);
+    sa_udp.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(udp_broadcast_sock, (struct sockaddr *)&sa_udp, sizeof(sa_udp)) < 0) {
+        error("Error intentando asignar una dirección al broadcast");
+        close(udp_broadcast_sock);
+        return FAIL;
+    }
+
+    set_socket_nonblocking(udp_broadcast_sock);
     return OK;
 }
 
@@ -270,7 +317,74 @@ int init_epoll(void)
 
 int startup(void)
 {
-    assert(0 && "TODO: startup not implemented");
+    send_udp_announce();
+    struct epoll_event startup_events[EPOLL_MAX_EVENTS];
+    time_t start_time = time(NULL);
+
+    if (time(NULL) - start_time < 2) {
+        int ready = epoll_wait(epoll_fd, startup_events,
+                               EPOLL_MAX_EVENTS, EPOLL_SHORT_TIMEOUT);
+        for (int i = 0; i < ready; ++i) {
+            if (startup_events[i].data.fd == udp_broadcast_sock)
+                handle_udp_packet(udp_broadcast_sock);
+        }
+    }
+
+    return OK;
+}
+
+void send_udp_announce(void)
+{
+    struct sockaddr_in sa_broadcast;
+    memset(&sa_broadcast, 0, sizeof(sa_broadcast));
+    sa_broadcast.sin_family = AF_INET;
+    sa_broadcast.sin_port = htons(PORT);
+    sa_broadcast.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+
+    char my_ip[64];
+    if (get_local_ip(my_ip, 64) < 0)
+        strcpy(my_ip, "127.0.0.1");
+
+    char buffer[BUFFER_MAX_SIZE] = { 0 };
+    sprintf(buffer, "ANNOUNCE %s %d cpu:%d mem:%d gpu:%d",
+            my_ip, PORT,
+            node_resources.cpu,
+            node_resources.mem,
+            node_resources.gpu);
+
+    // Because this is a UDP socket, we use sendto
+    ssize_t bytes = sendto(udp_broadcast_sock, buffer, strlen(buffer), 0,
+                            (struct sockaddr *)&sa_broadcast,
+                            sizeof(sa_broadcast));
+
+    if (bytes < 0)
+        error("Error intentando enviar ANNOUNCE");
+}
+
+int get_local_ip(char *ip_buffer, int buffer_size)
+{
+    struct ifaddrs *interfaces = NULL;
+    struct ifaddrs *p = NULL;
+    if (getifaddrs(&interfaces) < 0) {
+        error("Error intentando conseguir IPs");
+        return FAIL;
+    }
+
+    for (p = interfaces; p != NULL; p = p->ifa_next) {
+        if (p->ifa_addr == NULL)
+            continue;
+
+        // Search for IPv4
+        if (p->ifa_addr->sa_family == AF_INET)
+            // Check if up and not localhost
+            if ((p->ifa_flags & IFF_UP) && !(p->ifa_flags & IFF_LOOPBACK)) {
+                struct sockaddr_in *sa = (struct sockaddr_in *)p->ifa_addr;
+                if (inet_ntop(AF_INET, &(sa->sin_addr), ip_buffer, buffer_size) != NULL)
+                    break;
+            }
+    }
+
+    freeifaddrs(interfaces);
     return OK;
 }
 
@@ -280,6 +394,9 @@ int add_descriptors(void)
         return FAIL;
 
     if (add_descriptor(listen_erlang_sock) < 0)
+        return FAIL;
+
+    if (add_descriptor(udp_broadcast_sock) < 0)
         return FAIL;
 
     return OK;
@@ -335,7 +452,9 @@ void *epoll_handler(void *arg)
                 ev.data.fd = connect_erlang_sock;
                 if (add_descriptor(connect_erlang_sock) < 0)
                     exit(EXIT_FAILURE);
-            } else {
+            } else if (events[i].data.fd == udp_broadcast_sock)
+                handle_udp_packet(events[i].data.fd);
+            else {
                 int client_fd = events[i].data.fd;
 
                 // TODO: resolve possible deadlocks
@@ -371,7 +490,7 @@ void handle_c_agent(int fd)
 {
     char buffer[BUFFER_MAX_SIZE];
     memset(buffer, 0, BUFFER_MAX_SIZE);
-    ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE -1);
+    ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read <= 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
@@ -854,6 +973,52 @@ int get_agent_connection(NodeMapCell *node)
 
     node->socket_fd = sock;
     return sock;
+}
+
+void handle_udp_packet(int udp_fd)
+{
+    char buffer[BUFFER_MAX_SIZE] = { 0 };
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
+
+    ssize_t bytes_read = recvfrom(udp_fd, buffer, BUFFER_MAX_SIZE - 1, 0,
+                                  (struct sockaddr *)&addr,
+                                  &addrlen);
+
+    if (bytes_read <= 0)
+        return;
+
+    // Parse UDP 'ANNOUNCE' message
+    int len = 0;
+    char **fields = split(buffer, " ", &len);
+
+    // Not an ANNOUNCE message...
+    if (!streq(fields[0], "ANNOUNCE"))
+        return;
+
+    char *ip = fields[1];
+    NodeMapCell *node = hashmap_search(node_map, &ip);
+
+    if (node == NULL)
+        // TODO: node does not exist.
+        return;
+
+    // fields looks like
+    // [ANNOUNCE <ip> <port> cpu:<x> mem:<y> gpu:<z>]
+    //
+    // So take fields[3] + 4 to only get <x>
+    // Same with mem and gpu
+    LocalResources resources = {
+        atoi(fields[3] + 4),
+        atoi(fields[4] + 4),
+        atoi(fields[5] + 4),
+    };
+
+    node->resources = resources;
+    node->time_when_called = time(NULL);
+    hashmap_put(node_map, node);
+
+    free(fields);
 }
 
 // Closes the epoll instance
