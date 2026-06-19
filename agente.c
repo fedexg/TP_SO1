@@ -1,7 +1,7 @@
 // TODO LIST
 // - implement startup
 // - UDP socket broadcast
-// - implement parse_erlang_request
+// - fix memory leaks
 // - handle unexpected disconnections using SIGPIPE (cuando te intentas
 //   conectar con TCP a algo y ese algo dejo de existir, te manda un error
 //   de tipo SIGPIPE. y nada, eso es lo que tenemos que usar para manejar la
@@ -127,7 +127,7 @@ void increase_resources(ResourceKind kind, int amount);
 Request *request_dup(Request *req);
 void handle_erlang_client(int erlang_client_fd);
 void handle_job_request(char **request_fields, int request_fields_size, int fd);
-NodeMapCell *parse_erlang_request(char **request_fields, int request_fields_size, int *len);
+NodeMapCell *parse_erlang_request(char **request_fields, int request_fields_size, int fd, int *len);
 void find_requested_parameters(char **request_fields, int request_fields_size, char *resource, int *amount);
 void handle_job_release(char **request_fields, int fd);
 void handle_job_status(char **request_fields, int fd);
@@ -628,7 +628,7 @@ void handle_job_request(char **request_fields, int request_fields_size, int fd)
 {
     long long job_id = atoll(request_fields[1]);
     int len = 0;
-    NodeMapCell *parsed = parse_erlang_request(request_fields, request_fields_size, &len);
+    NodeMapCell *parsed = parse_erlang_request(request_fields, request_fields_size, fd, &len);
 
     for (int i = 0; i < len; ++i) {
         int agent_fd = get_agent_connection(&parsed[i]);
@@ -670,11 +670,8 @@ void handle_job_request(char **request_fields, int request_fields_size, int fd)
         sprintf(msg, "RESERVE %lld %s %d", job_id, resource, amount);
         send(agent_fd, msg, strlen(msg), 0);
     }
-}
 
-NodeMapCell *parse_erlang_request(char **request_fields, int request_fields_size, int *len)
-{
-    return NULL;
+    free(parsed);
 }
 
 void find_requested_parameters(char **request_fields, int request_fields_size, char *resource, int *amount)
@@ -686,8 +683,42 @@ void find_requested_parameters(char **request_fields, int request_fields_size, c
     }
 }
 
+// Parses a request with the form JOB_REQUEST <job_id> [@ip:res:amount ... ]
+// Returns the nodes that it will ask resources from
+NodeMapCell *parse_erlang_request(char **request_fields, int request_fields_size, int fd, int *len)
+{
+    int cap = 256;
+    NodeMapCell *nodes = calloc(cap, sizeof(NodeMapCell));
+    int nodes_len = 0;
+
+    // Read starting from the array of nodes
+    for (int i = 2; i < request_fields_size; ++i) {
+        // TODO: any way to get the port?
+        char **node_information = split(request_fields[i], ":", NULL);
+        nodes[nodes_len].ip = strdup(node_information[0] + 1);
+        nodes[nodes_len].socket_fd = fd;
+
+        if (streq(node_information[1], "cpu"))
+            nodes[nodes_len].resources.cpu = atoi(node_information[2]);
+        else if (streq(node_information[1], "mem"))
+            nodes[nodes_len].resources.mem = atoi(node_information[2]);
+        else if (streq(node_information[1], "gpu"))
+            nodes[nodes_len].resources.gpu = atoi(node_information[2]);
+
+        free(node_information);
+        ++nodes_len;
+
+        if (nodes_len >= cap/2) {
+            cap *= 2;
+            nodes = realloc(nodes, cap*sizeof(NodeMapCell));
+        }
+    }
+
+    *len = nodes_len;
+    return nodes;
+}
+
 // Handles an incoming job release from the erlang client
-// IMPLEMENTACION: RECIBE RELEASE -> LIBERA RECURSOS LOCALES (O NO) -> ELIMINA EL JOB DE JOB_MAP -> MANDA RELEASE A LOS AGENTES C CORRESPONDIENTES
 void handle_job_release(char **request_fields, int fd)
 {
     long long job_id = atoll(request_fields[1]);
