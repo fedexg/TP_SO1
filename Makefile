@@ -2,7 +2,7 @@ CC=gcc
 C_SRC=agente.c ds/hashmap.c ds/queue.c
 C_OBJ=$(C_SRC:.c=.o)
 C_OUT=agente
-CFLAGS=-Wall -Werror
+CFLAGS=-Wall -Werror -pthread
 
 default: $(C_OBJ)
 	$(CC) -o $(C_OUT) $(CFLAGS) $(C_OBJ)
