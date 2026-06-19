@@ -1,3 +1,19 @@
+// TODO LIST
+// - implement startup
+// - UDP socket broadcast
+// - add error messages
+// - implement parse_erlang_request
+// - handle unexpected disconnections using SIGPIPE (cuando te intentas
+//   conectar con TCP a algo y ese algo dejo de existir, te manda un error
+//   de tipo SIGPIPE. y nada, eso es lo que tenemos que usar para manejar la
+//   desconexion inesperada. Tenemos que cacheaar usando signal a SIGPIPE y
+//   hacer algo)
+// - implement handle_job_status
+// - deadlock prevention (timeouts, timerfd)
+// - handle enqueued requests when REQUEST_KIND_RELEASE (tener una cola que guarde
+//   requests completas, fijarnos si hay recursos para el request y fijarse si
+//   grant o deny)
+
 #include <assert.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -111,10 +127,14 @@ void give_resources(ResourceKind kind, int amount);
 void increase_resources(ResourceKind kind, int amount);
 Request *request_dup(Request *req);
 void handle_erlang_client(int erlang_client_fd);
-void handle_job_request(char **request_fields, int fd);
+void handle_job_request(char **request_fields, int request_fields_size, int fd);
+NodeMapCell *parse_erlang_request(char **request_fields, int request_fields_size, int *len);
+void find_requested_parameters(char **request_fields, int request_fields_size, char *resource, int *amount);
 void handle_job_release(char **request_fields, int fd);
 void handle_job_status(char **request_fields, int fd);
 void handle_get_nodes(char **request_fields, int fd);
+void send_release_to_agent(const char *agent_ip, long long job_id, const char *resource, int amount);
+int get_agent_connection(NodeMapCell *node);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
@@ -326,7 +346,12 @@ void *epoll_handler(void *arg)
                 else if (client_fd == connect_erlang_sock)
                     handle_erlang_client(client_fd);
                 else {
-                    // TODO: we are client
+                    char response[BUFFER_MAX_SIZE] = { 0 };
+                    ssize_t bytes = read(client_fd, response, sizeof(response) - 1);
+                    if (bytes <= 0) {
+                        close(client_fd);
+                        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+                    }
                 }
             }
         }
@@ -562,17 +587,21 @@ Request *request_dup(Request *req)
 // Handles an erlang client connection
 void handle_erlang_client(int fd)
 {
-    char buffer[BUFFER_MAX_SIZE];
-    memset(buffer, 0, BUFFER_MAX_SIZE);
+    char buffer[BUFFER_MAX_SIZE] = { 0 };
     ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read <= 0);
         // TODO error no bytes read
     else {
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
-        if (streq(request_fields[0],"JOB_REQUEST"))
-            handle_job_request(request_fields, fd);
-        else if (streq(request_fields[0],"JOB_RELEASE"))
+
+        if (streq(request_fields[0], "JOB_REQUEST")) {
+            handle_job_request(request_fields, length, fd);
+
+            //char granted_buffer[BUFFER_MAX_SIZE] = { 0 };
+            //sprintf(granted_buffer, "GRANTED %lld", atoi(request_fields[1]));
+            //send(fd, granted_buffer, strlen(granted_buffer), 0);
+        } else if (streq(request_fields[0],"JOB_RELEASE"))
             handle_job_release(request_fields,fd);
         else if (streq(request_fields[0],"JOB_STATUS"))
             handle_job_status(request_fields,fd);
@@ -585,9 +614,66 @@ void handle_erlang_client(int fd)
 }
 
 // Handles an incoming job request from the erlang client
-// IMPLEMENTACION: RECIBE LA REQUEST -> OTORGA RECURSOS LOCALS (O NO) -> MANDA RESERVE A LOS AGENTES C CORRESPONDIENTES
-void handle_job_request(char **request_fields, int fd){
+void handle_job_request(char **request_fields, int request_fields_size, int fd)
+{
+    long long job_id = atoll(request_fields[1]);
+    int len = 0;
+    NodeMapCell *parsed = parse_erlang_request(request_fields, request_fields_size, &len);
 
+    for (int i = 0; i < len; ++i) {
+        int agent_fd = get_agent_connection(&parsed[i]);
+        if (agent_fd == -1) {
+            // TODO: handle error
+            return;
+        }
+
+        char msg[BUFFER_MAX_SIZE] = { 0 };
+
+        // Find resource and amount
+        char resource[4] = { 0 };
+        int amount = 0;
+
+        // Example:
+        // {
+        //  @host:cpu:1
+        //  {
+        //      @host
+        //      cpu      [1]
+        //      1        [2]
+        //  }
+        //  @host:gpu:2
+        //  {
+        //      @host
+        //      gpu      [1]
+        //      2        [2]
+        //  }
+        //  @host:mem:4096
+        //  {
+        //      @host
+        //      mem      [1]
+        //      4096     [2]
+        //  }
+        // }
+        find_requested_parameters(request_fields + 2, request_fields_size - 2, resource, &amount);
+
+        // Send RESERVE message based on what we found
+        sprintf(msg, "RESERVE %lld %s %d", job_id, resource, amount);
+        send(agent_fd, msg, strlen(msg), 0);
+    }
+}
+
+NodeMapCell *parse_erlang_request(char **request_fields, int request_fields_size, int *len)
+{
+    return NULL;
+}
+
+void find_requested_parameters(char **request_fields, int request_fields_size, char *resource, int *amount)
+{
+    for (int i = 0; i < request_fields_size; ++i) {
+        char **resource_fields = split(request_fields[i], ":", NULL);
+        strcpy(resource, resource_fields[1]);
+        *amount = atoi(resource_fields[2]);
+    }
 }
 
 // Handles an incoming job release from the erlang client
@@ -595,7 +681,7 @@ void handle_job_request(char **request_fields, int fd){
 void handle_job_release(char **request_fields, int fd)
 {
     long long job_id = atoll(request_fields[1]);
-    JobMapCell* cell = hashmap_search(job_map, &job_id);
+    JobMapCell *cell = hashmap_search(job_map, &job_id);
     if (cell == NULL) {
         // TODO: que pasa si el job no existe?
     }
@@ -607,12 +693,12 @@ void handle_job_release(char **request_fields, int fd)
     // Iterate over remotely allocated resources
     for (int i = 0; i < cell->num_remotely_allocated; i++) {
         RemoteAllocation remote = cell->remote_allocations[i];
-        if (remote.resources.cpu > 0);
-            // TODO: MANDAR AL AGENTE C REMOTO USANDO EL PUERTO Y LA IP RELEASE
-        if (remote.resources.gpu > 0);
-            // TODO: MANDAR AL AGENTE C REMOTO USANDO EL PUERTO Y LA IP RELEASE
-        if (remote.resources.mem > 0);
-            // TODO: MANDAR AL AGENTE C REMOTO USANDO EL PUERTO Y LA IP RELEASE
+        if (remote.resources.cpu > 0)
+            send_release_to_agent(remote.ip, job_id, "cpu", remote.resources.cpu);
+        if (remote.resources.gpu > 0)
+            send_release_to_agent(remote.ip, job_id, "gpu", remote.resources.gpu);
+        if (remote.resources.mem > 0)
+            send_release_to_agent(remote.ip, job_id, "mem", remote.resources.mem);
     }
 
     free(cell->remote_allocations);
@@ -628,14 +714,100 @@ void handle_job_release(char **request_fields, int fd)
 // IMPLEMENTACION: QUIEN SABE
 void handle_job_status(char **request_fields, int fd)
 {
-
+    // TODO: wtf???
 }
 
 // Handles an incoming get nodes from the erlang client
-// IMPLEMENTACION: RECORRER NODE_MAP -> SEND LOS NODOS QUE HAYA EN LA RED
 void handle_get_nodes(char **request_fields, int fd)
 {
+    // Format: NODES IP:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3;IP:PORT:cpu:NUM4:mem:NUM5:gpu:NUM6; ...
+    int buffer_cap = 1024;
+    char *buffer = calloc(buffer_cap, sizeof(char));
+    strcpy(buffer, "NODES ");
 
+    for (int i = 0; i < node_map->cap; ++i) {
+        bool exists_item = node_map->items[i].data != NULL &&
+                            !node_map->items[i].deleted;
+        if (exists_item) {
+            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
+            char node_buffer[1024] = { 0 };
+            snprintf(node_buffer, sizeof(node_buffer), "%s:%d:cpu:%d:mem:%d:gpu:%d;",
+                     node->ip,
+                     node->port,
+                     node->resources.cpu,
+                     node->resources.mem,
+                     node->resources.gpu);
+
+            // If the new string won't fit, grow the buffer dynamically
+            while (strlen(buffer) + strlen(node_buffer) >= buffer_cap) {
+                buffer_cap *= 2;
+                char *new_buffer = realloc(buffer, buffer_cap);
+                buffer = new_buffer;
+            }
+
+            // Append what we wrote to the result buffer
+            strcat(buffer, node_buffer);
+        }
+    }
+
+    send(fd, buffer, strlen(buffer), 0);
+}
+
+void send_release_to_agent(const char *agent_ip, long long job_id, const char *resource, int amount)
+{
+    NodeMapCell *target_node = hashmap_search(node_map, &agent_ip);
+
+    // This node is not in the cluster, so we're done
+    if (target_node == NULL)
+        return;
+
+    int fd = get_agent_connection(target_node);
+    if (fd == -1) {
+        // TODO: handle error
+        return;
+    }
+
+    // We won't close fd because we want to keep it alive in the epoll instance
+    char release_msg[BUFFER_MAX_SIZE];
+    snprintf(release_msg, sizeof(release_msg), "RELEASE %lld %s %d", job_id, resource, amount);
+    send(fd, release_msg, strlen(release_msg), 0);
+}
+
+int get_agent_connection(NodeMapCell *node)
+{
+    // If connection is up, reuse it
+    if (node->socket_fd != -1)
+        return node->socket_fd;
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0)
+        return FAIL;
+
+    set_socket_nonblocking(sock);
+
+    // Set up socket and get address information
+    struct sockaddr_in agent_addr;
+    memset(&agent_addr, 0, sizeof(agent_addr));
+    agent_addr.sin_family = AF_INET;
+    agent_addr.sin_port = htons(node->port);
+    inet_pton(AF_INET, node->ip, &agent_addr.sin_addr);
+
+    // We check if errno is EINPROGRESS because sock is non-blocking.
+    int res = connect(sock, (struct sockaddr *)&agent_addr, sizeof(agent_addr));
+    if (res < 0 && errno != EINPROGRESS) {
+        close(sock);
+        return FAIL;
+    }
+
+    // Add to epoll instance to listen for events
+    if (add_descriptor(sock) < 0) {
+        // TODO: error message
+        close(sock);
+        return FAIL;
+    }
+
+    node->socket_fd = sock;
+    return sock;
 }
 
 // Closes the epoll instance
