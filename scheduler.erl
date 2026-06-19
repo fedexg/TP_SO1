@@ -57,8 +57,8 @@ scheduler_loop(Socket, Job_Queue, Clients_Map, N) ->
     Nodes_Info = request_nodes_info(Socket),
     case queue:is_empty(Job_Queue) of
         false -> {{Job_Id, Job_Info}, New_Job_Queue} = queue:out(Job_Queue),
-                 msg_to_client = check_job_valid(Nodes_Info, Job_Id, Job_Info),
-                 get(Job_Id, Clients_Map) ! msg_to_client,
+                 Msg_to_client = check_job_valid(Socket, Nodes_Info, Job_Id, Job_Info),
+                 maps:get(Job_Id, Clients_Map) ! Msg_to_client,
                  New_Clients_Map = maps:remove(Job_Id, Clients_Map),
                  scheduler_loop(Socket, New_Job_Queue, New_Clients_Map, N);
         _ -> ok
@@ -66,8 +66,10 @@ scheduler_loop(Socket, Job_Queue, Clients_Map, N) ->
     receive
         {new_job, Client_Id, Request_Info} -> New_Job_Queue = queue:in({N, Request_Info},Job_Queue),
                                               New_Client_Map = maps:add(N, Client_Id, Clients_Map),
+                                              Client_Id ! {given_jobid, N},
                                               scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N+1);
-        {job_finished, Job_Id} -> send_to_agent(Socket, release, Job_Id);
+        {job_finished, Job_Id} -> send_to_agent(Socket, release, Job_Id),
+                                  scheduler_loop(Socket, Job_Queue, N);
         _ -> scheduler_loop(Socket, Job_Queue, N);
     end.
 
@@ -89,7 +91,7 @@ parse_node_info(Socket, Data) ->
 
 fold_node_data(X, Total, Data_Index) ->
     Data = string:split(X, ":"),
-    Total + list_to_integer(lists:nth(Data_Index, Data)).
+    Total + erlang:list_to_integer(lists:nth(Data_Index, Data)).
 
 manage_nodes_info(List_Nodes) ->
     Max_Nodes_CPU = lists:foldl(fun(X,Total) -> fold_node_data(X, Total, 4) end, 0, List_Nodes),
@@ -118,22 +120,67 @@ send_to_agent(Socket, Message_Type, Job_Id) ->
                     job_request_inbox(Socket);
         release -> gen_tcp:send(Socket, "JOB_RELEASE "++Job_Id),
                     timer:sleep(5000),
-                    request_nodes_info(Socket)
     end.
 
-check_job_valid(Nodes_Info, Job_Id, Job_Info) ->
+check_job_valid(Socket, Nodes_Info, Job_Id, Job_Info) ->
     {Max_CPU, Max_MEM, Max_GPU, List_Nodes} = Nodes_Info,
     {CPU, MEM, GPU} = Job_Info,
     if 
         Max_CPU - CPU >= 0, Max_MEM - MEM >= 0, Max_GPU - GPU >= 0 ->
-            manage_job_info(List_Nodes, Job_Id, Job_Info);
+            manage_job_info(Socket, List_Nodes, Job_Id, Job_Info);
         true ->
             invalid_job
     end.
 
-manage_job_info(List_Nodes, Job_Id, Job_Info) ->
-    
+map_node_data(List_Nodes, Data_Index) ->
+    Data = string:split(X, ":"),
+    lists:nth(Data_Index, Data).
 
+map_node_data_to_int(List_Nodes, Data_Index) ->
+    Data = string:split(X, ":"),
+    erlang:list_to_integer(lists:nth(Data_Index, Data)).
+
+ammout_to_ask(Amount, List, Index) ->
+    case List of 
+        [Num | Rest] ->
+            if 
+                Num - Amount < 0 -> % la cantidad buscada no es suficiente en este nodo
+                    Rest_to_ask = Amount - Num,
+                    lists:append([{Index, Num}],ammout_to_ask(Rest_to_ask, Rest, Index+1));
+                true -> 
+                    [{Index, Amount}]
+            end;
+        [] -> []
+    end.
+
+string_of_ip_request(IP_LIST, DATA_TO_ASK, DATA_TYPE) ->
+    case DATA_TO_ASK of
+        [{Index_IP, AMMOUT} | XS] -> "@"++nth(Index_IP, IP_LIST)++":"++DATA_TYPE++":"++integer_to_list(AMMOUT)++" "++string_of_ip_request(IP_LIST, XS, DATA_TYPE);
+        [] -> ""
+    end.
+
+manage_job_info(Socket, List_Nodes, Job_Id, Job_Info) ->
+    {CPU, MEM, GPU} = Job_Info,
+    IP_LIST = lists:map(fun(N) -> map_node_data(N,1) end, List_Nodes),
+    CPU_LIST = lists:map(fun(N) -> map_node_data_to_int(N,4) end, List_Nodes),
+    MEM_LIST = lists:map(fun(N) -> map_node_data_to_int(N,6) end, List_Nodes),
+    GPU_LIST = lists:map(fun(N) -> map_node_data_to_int(N,8) end, List_Nodes),
+    CPU_TO_ASK = ammout_to_ask(CPU, CPU_LIST),
+    MEM_TO_ASK = ammout_to_ask(MEM, MEM_LIST),
+    GPU_TO_ASK = ammout_to_ask(GPU, GPU_LIST),
+    String_To_Send = string_of_ip_request(IP_LIST, CPU_TO_ASK,"cpu")++string_of_ip_request(IP_LIST, MEM_TO_ASK,"mem")++string_of_ip_request(IP_LIST, GPU_TO_ASK, "gpu")
+    send_to_agent(Socket, Message_Type, Job_Id++" "++String_To_Send).
+
+% Recorrer ITH_LIST, haciendo JOB_INFO_ITH - ITH_LIST[ITH], hasta que JOB_INFO_ITH <= 0
+% Da una lista de {indice_ip, cuanto_pedir}
+% hacer un string "@"++IP_LIST[indice_ip]++":cpu:"++cuanto_pedir
+
+client_simulator(Scheduler) ->
+
+    receive
+
+    end,
+    client_simulator(Scheduler).
 
 %do_job() ->
 %    io:fwrite("I: ~p, am doing my job ~n", [self()]),
