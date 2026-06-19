@@ -24,6 +24,7 @@
 #include <sys/epoll.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
 #include <time.h>
 
@@ -103,7 +104,9 @@ typedef struct _Request {
 int listen_public_sock, listen_erlang_sock;
 int connect_public_sock, connect_erlang_sock;
 int udp_broadcast_sock;
+int timer_fd;
 int epoll_fd, num_fds_ready;
+static int seconds_passed = 0;
 struct epoll_event ev, events[EPOLL_MAX_EVENTS];
 LocalResources node_resources;
 Hashmap node_map, job_map;
@@ -114,6 +117,7 @@ int init_sockets(void);
 int init_agents_socket(void);
 int init_listen_erlang_socket(void);
 int init_udp_socket(void);
+int init_timer(void);
 int init_epoll(void);
 int startup(void);
 void send_udp_announce(void);
@@ -139,6 +143,7 @@ void handle_job_status(char **request_fields, int fd);
 void handle_get_nodes(char **request_fields, int fd);
 void send_release_to_agent(const char *agent_ip, long long job_id, const char *resource, int amount);
 int get_agent_connection(NodeMapCell *node);
+void check_agent_expiration_time(void);
 void handle_udp_packet(int udp_fd);
 int close_epoll(void);
 int close_sockets(void);
@@ -303,6 +308,38 @@ int init_udp_socket(void)
     return OK;
 }
 
+int init_timer(void)
+{
+    timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    if (timer_fd < 0) {
+        error("Error intentando crear el temporizador");
+        return FAIL;
+    }
+
+    struct itimerspec expiration;
+
+    // First-time expiration check
+    expiration.it_value.tv_sec = 5;
+    expiration.it_value.tv_nsec = 0;
+
+    // Periodic expiration check
+    expiration.it_interval.tv_sec = 5;
+    expiration.it_value.tv_nsec = 0;
+
+    if (timerfd_settime(timer_fd, 0, &expiration, NULL) < 0) {
+        error("Error intentando configurar el temporizador");
+        close(timer_fd);
+        return FAIL;
+    }
+
+    if (add_descriptor(timer_fd) < 0) {
+        close(timer_fd);
+        return FAIL;
+    }
+
+    return OK;
+}
+
 // Initializes the epoll instance
 int init_epoll(void)
 {
@@ -454,7 +491,11 @@ void *epoll_handler(void *arg)
                     exit(EXIT_FAILURE);
             } else if (events[i].data.fd == udp_broadcast_sock)
                 handle_udp_packet(events[i].data.fd);
-            else {
+            else if (events[i].data.fd == timer_fd) {
+                long long expirations = 0;
+                read(timer_fd, &expirations, sizeof(long long));
+                check_agent_expiration_time();
+            } else {
                 int client_fd = events[i].data.fd;
 
                 // TODO: resolve possible deadlocks
@@ -973,6 +1014,31 @@ int get_agent_connection(NodeMapCell *node)
 
     node->socket_fd = sock;
     return sock;
+}
+
+void check_agent_expiration_time(void)
+{
+    time_t now = time(NULL);
+
+    for (int i = 0; i < node_map->cap; ++i) {
+        bool exists_item = node_map->items[i].data != NULL &&
+                            !node_map->items[i].deleted;
+        if (exists_item) {
+            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
+            double diff = difftime(now, node->time_when_called);
+            if (diff >= 15.0) {
+                // TODO: check if there are resources to free
+                hashmap_delete(node_map, node);
+            }
+        }
+    }
+
+    // Tell other agents we're alive
+    ++seconds_passed;
+    if (seconds_passed >= 5) {
+        send_udp_announce();
+        seconds_passed = 0;
+    }
 }
 
 void handle_udp_packet(int udp_fd)
