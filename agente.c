@@ -53,10 +53,20 @@ typedef struct _LocalResources {
     int gpu;
 } LocalResources;
 
+// Represents the allocated resources in a remote node
+typedef struct _RemoteAllocation {
+    char ip[16];
+    int port;
+    int cpu;
+    int mem;
+    int gpu;
+} RemoteAllocation;
+
 // Cell of node_map
 typedef struct _NodeMapCell {
     char* ip;
     int port;
+    int socket_fd;
     LocalResources resources;
     time_t time_when_called;
 } NodeMapCell;
@@ -64,6 +74,8 @@ typedef struct _NodeMapCell {
 // Cell of job_map 
 typedef struct _JobMapCell {
     int job_id;
+    int num_remotely_allocated;
+    RemoteAllocation* remote_allocations; // array of all the remotely allocated resources
     LocalResources granted_resources;
 } JobMapCell;
 
@@ -315,6 +327,9 @@ void *epoll_handler(void *arg)
                     handle_c_agent(client_fd);
                 else if (client_fd == connect_erlang_sock)
                     handle_erlang_client(client_fd);
+                else{
+
+                }
             }
         }
     }
@@ -459,8 +474,13 @@ void process_request(Request req, int fd)
             // lol
             break;
         }
-
-        hashmap_put(job_map, &cell);
+        if (cell->granted_resources.cpu == 0 && cell->granted_resources.gpu == 0 && cell->granted_resources.mem){
+            hashmap_delete(job_map,&req.job_id);
+            free(cell);
+        }
+        else{
+            hashmap_put(job_map, &cell);
+        }
         break;
     default:
         break;
@@ -574,7 +594,28 @@ void handle_job_request(char** request_fields,int fd){
 // Handles an incoming job release from the erlang client
 // IMPLEMENTACION: RECIBE RELEASE -> LIBERA RECURSOS LOCALES (O NO) -> ELIMINA EL JOB DE JOB_MAP -> MANDA RELEASE A LOS AGENTES C CORRESPONDIENTES
 void handle_job_release(char** request_fields,int fd){
+    long long job_id = atoll(request_fields[1]);
+    JobMapCell* cell = hashmap_search(job_map, &job_id);
+    if (cell == NULL){
+        // TODO: que pasa si el job no existe?
+    }
+    increase_resources(RES_KIND_CPU, cell->granted_resources.cpu);
+    increase_resources(RES_KIND_GPU, cell->granted_resources.gpu);
+    increase_resources(RES_KIND_MEM, cell->granted_resources.mem);
+    // Iteramos sobre los recursos alocados remotamente;
+    for (int i = 0; i < cell->num_remotely_allocated; i++) {
+        RemoteAllocation remote = cell->remote_allocations[i];
+        if (remote.cpu > 0);
+            // TODO: MANDAR AL AGENTE C REMOTO USANDO EL PUERTO Y LA IP RELEASE
+        if (remote.gpu > 0);
+            // TODO: MANDAR AL AGENTE C REMOTO USANDO EL PUERTO Y LA IP RELEASE
+        if (remote.mem > 0);
+            // TODO: MANDAR AL AGENTE C REMOTO USANDO EL PUERTO Y LA IP RELEASE
+    }
+    free(cell->remote_allocations);
+    hashmap_delete(job_map, &job_id);
 
+    // TODO: HAY QUE RESPONDERLE A ERLANG??
 }
 // Handles an incoming job status from the erlang client
 // TIMEOUT -> ?????
