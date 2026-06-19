@@ -96,10 +96,10 @@ typedef struct _JobMapCell {
     LocalResources granted_resources;
 } JobMapCell;
 
-typedef struct JobQueueNode {
+typedef struct JobQueueData {
     JobMapCell job_cell;
     time_t time_when_alloc;
-} JobQueueNode;
+} JobQueueData;
 
 typedef struct _Request {
     long long job_id;
@@ -123,8 +123,8 @@ Queue job_queue;
 List timed_out_jobs;
 
 // Job queue information
-JobQueueNode *job_copy(JobQueueNode *j);
-void job_free(JobQueueNode *j);
+JobQueueData *job_copy(JobQueueData *j);
+void job_free(JobQueueData *j);
 
 // General functions
 void sigpipe_handler(int s);
@@ -167,6 +167,12 @@ int close_sockets(void);
 int cleanup(int flags);
 LocalResources get_initial_resources(void);
 
+// Acomoda estas funciones y sus definiciones donde quieras Lauren
+int find_in_queue(Queue queue,int id);
+int find_in_list(List list, int id);
+void delete_from_timed_out_jobs(int id);
+//.
+
 int main(int argc, char **argv)
 {
     signal(SIGPIPE, SIG_IGN);
@@ -203,14 +209,14 @@ int main(int argc, char **argv)
     return 0;
 }
 
-JobQueueNode *job_copy(JobQueueNode *j)
+JobQueueData *job_copy(JobQueueData *j)
 {
     long long job_id = j->job_cell.job_id;
     int num_remotely_allocated = j->job_cell.num_remotely_allocated;
     RemoteAllocation *remote_allocations = j->job_cell.remote_allocations;
     time_t time_when_alloc = j->time_when_alloc;
 
-    JobQueueNode *cloned = malloc(sizeof(JobQueueNode));
+    JobQueueData *cloned = malloc(sizeof(JobQueueData));
     cloned->job_cell.job_id = job_id;
     cloned->job_cell.num_remotely_allocated = num_remotely_allocated;
     cloned->job_cell.remote_allocations = calloc(num_remotely_allocated, sizeof(RemoteAllocation));
@@ -219,7 +225,7 @@ JobQueueNode *job_copy(JobQueueNode *j)
     return cloned;
 }
 
-void job_free(JobQueueNode *j)
+void job_free(JobQueueData *j)
 {
     free(j->job_cell.remote_allocations);
     free(j);
@@ -956,7 +962,7 @@ void handle_job_request(char **request_fields, int request_fields_size, int fd)
         sprintf(msg, "JOB_DENIED %lld", job_id);
         send(fd, msg, strlen(msg), 0);
 
-        JobQueueNode job = {
+        JobQueueData job = {
             (JobMapCell){ job_id, 0, NULL, (LocalResources){ 0 } },
             time(NULL)
         };
@@ -1104,6 +1110,55 @@ void handle_job_status(char **request_fields, int fd)
     }
 
     send(fd, buffer, strlen(buffer), 0);
+}
+
+// Function that only works with the following implementation: (queue of void* data that stores a JobQueueData structure)
+// Given a queue that satisfies the criteria above, returns 1 if there is a node in which JobQueueData.job_cell.job_id == id, 0 if not
+int find_in_queue(Queue queue,int id){
+    int is_found = 0;
+    for(QueueNode* actual_node = queue;actual_node != NULL;actual_node = actual_node->next){
+        JobQueueData* job = (JobQueueData*)actual_node->data;
+        if (job->job_cell.job_id == id){
+            is_found = 1;
+            break;
+        }
+    }
+    return is_found;
+}
+
+// Function that only works with the following implementation: (list of void* data that stores an int* job_id)
+// Given a list that satisfies the criteria above, returns 1 if there is a node with id as *job_iid, 0 if no such node exists.
+int find_in_list(List list, int id){
+    int is_found = 0;
+    for (ListNode* actual_node = list;actual_node != NULL;actual_node = actual_node->next){
+        int *job_id = (int*)actual_node->data;
+        if (*job_id == id){
+            is_found = 1;
+            break;
+        }
+    }
+    return is_found;
+}
+
+// Given the timed_out_jobs list (which stores a job_id &int in data)
+// deletes the node whose *job_id is equal to id
+void delete_from_timed_out_jobs(int id){
+    ListNode* node_before = timed_out_jobs;
+    if (*(int*)node_before->data == id){
+        free(node_before->data);
+        timed_out_jobs = timed_out_jobs->next;
+        free(node_before);
+    }
+    else{
+        ListNode* actual_node = timed_out_jobs->next;
+        for(;*(int*)actual_node->data != id && actual_node != NULL;actual_node = actual_node->next)
+            node_before = node_before->next;
+        if (actual_node != NULL){
+            node_before->next = actual_node->next;
+            free(actual_node->data);
+            free(actual_node);
+        }
+    }
 }
 
 // Handles an incoming get nodes from the erlang client
