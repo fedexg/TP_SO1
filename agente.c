@@ -57,14 +57,12 @@ typedef struct _LocalResources {
 typedef struct _RemoteAllocation {
     char ip[16];
     int port;
-    int cpu;
-    int mem;
-    int gpu;
+    LocalResources resources;
 } RemoteAllocation;
 
 // Cell of node_map
 typedef struct _NodeMapCell {
-    char* ip;
+    char *ip;
     int port;
     int socket_fd;
     LocalResources resources;
@@ -75,7 +73,7 @@ typedef struct _NodeMapCell {
 typedef struct _JobMapCell {
     int job_id;
     int num_remotely_allocated;
-    RemoteAllocation* remote_allocations; // array of all the remotely allocated resources
+    RemoteAllocation *remote_allocations; // array of all the remotely allocated resources
     LocalResources granted_resources;
 } JobMapCell;
 
@@ -113,10 +111,10 @@ void give_resources(ResourceKind kind, int amount);
 void increase_resources(ResourceKind kind, int amount);
 Request *request_dup(Request *req);
 void handle_erlang_client(int erlang_client_fd);
-void handle_job_request(char** request_fields,int fd);
-void handle_job_release(char** request_fields,int fd);
-void handle_job_status(char** request_fields,int fd);
-void handle_get_nodes(char** request_fields,int fd);
+void handle_job_request(char **request_fields, int fd);
+void handle_job_release(char **request_fields, int fd);
+void handle_job_status(char **request_fields, int fd);
+void handle_get_nodes(char **request_fields, int fd);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
@@ -327,8 +325,8 @@ void *epoll_handler(void *arg)
                     handle_c_agent(client_fd);
                 else if (client_fd == connect_erlang_sock)
                     handle_erlang_client(client_fd);
-                else{
-
+                else {
+                    // TODO: we are client
                 }
             }
         }
@@ -449,7 +447,9 @@ void process_request(Request req, int fd)
             send(fd, response_to_agent, 8, 0);
             request_queue = enqueue(request_queue, &req, (QueueCpyFunc)request_dup);
         }
+
         break;
+
     case REQUEST_KIND_RELEASE:
         increase_resources(req.res_kind, req.amount);
         JobMapCell *cell = hashmap_search(job_map, &req.job_id);
@@ -458,29 +458,31 @@ void process_request(Request req, int fd)
         if (cell == NULL) {
             sprintf(response_to_agent, "DENIED %lld", req.job_id);
             send(fd, response_to_agent, 8, 0);
+            return;
         }
 
         switch (req.res_kind) {
-            case RES_KIND_CPU:
+        case RES_KIND_CPU:
             cell->granted_resources.cpu -= req.amount;
             break;
-            case RES_KIND_GPU:
+        case RES_KIND_GPU:
             cell->granted_resources.gpu -= req.amount;
             break;
-            case RES_KIND_MEM:
+        case RES_KIND_MEM:
             cell->granted_resources.mem -= req.amount;
             break;
-            default:
+        default:
             // lol
             break;
         }
-        if (cell->granted_resources.cpu == 0 && cell->granted_resources.gpu == 0 && cell->granted_resources.mem){
+
+        if (cell->granted_resources.cpu == 0 && cell->granted_resources.gpu == 0 &&
+            cell->granted_resources.mem) {
             hashmap_delete(job_map,&req.job_id);
             free(cell);
-        }
-        else{
+        } else
             hashmap_put(job_map, &cell);
-        }
+
         break;
     default:
         break;
@@ -562,25 +564,21 @@ void handle_erlang_client(int fd)
 {
     char buffer[BUFFER_MAX_SIZE];
     memset(buffer, 0, BUFFER_MAX_SIZE);
-    ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE -1);
+    ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read <= 0);
         // TODO error no bytes read
     else {
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
-        if (streq(request_fields[0],"JOB_REQUEST")){
+        if (streq(request_fields[0],"JOB_REQUEST"))
             handle_job_request(request_fields, fd);
-        }
-        else if (streq(request_fields[0],"JOB_RELEASE")){
+        else if (streq(request_fields[0],"JOB_RELEASE"))
             handle_job_release(request_fields,fd);
-        }
-        else if(streq(request_fields[0],"JOB_STATUS")){
+        else if (streq(request_fields[0],"JOB_STATUS"))
             handle_job_status(request_fields,fd);
-        }
-        else if(streq(request_fields[0],"GET_NODES")){
+        else if (streq(request_fields[0],"GET_NODES"))
             handle_get_nodes(request_fields,fd);
-        }
-        else{
+        else {
             // TODO: HANDLE ERROR
         }
     }
@@ -588,49 +586,57 @@ void handle_erlang_client(int fd)
 
 // Handles an incoming job request from the erlang client
 // IMPLEMENTACION: RECIBE LA REQUEST -> OTORGA RECURSOS LOCALS (O NO) -> MANDA RESERVE A LOS AGENTES C CORRESPONDIENTES
-void handle_job_request(char** request_fields,int fd){
+void handle_job_request(char **request_fields, int fd){
 
 }
+
 // Handles an incoming job release from the erlang client
 // IMPLEMENTACION: RECIBE RELEASE -> LIBERA RECURSOS LOCALES (O NO) -> ELIMINA EL JOB DE JOB_MAP -> MANDA RELEASE A LOS AGENTES C CORRESPONDIENTES
-void handle_job_release(char** request_fields,int fd){
+void handle_job_release(char **request_fields, int fd)
+{
     long long job_id = atoll(request_fields[1]);
     JobMapCell* cell = hashmap_search(job_map, &job_id);
-    if (cell == NULL){
+    if (cell == NULL) {
         // TODO: que pasa si el job no existe?
     }
+
     increase_resources(RES_KIND_CPU, cell->granted_resources.cpu);
     increase_resources(RES_KIND_GPU, cell->granted_resources.gpu);
     increase_resources(RES_KIND_MEM, cell->granted_resources.mem);
-    // Iteramos sobre los recursos alocados remotamente;
+
+    // Iterate over remotely allocated resources
     for (int i = 0; i < cell->num_remotely_allocated; i++) {
         RemoteAllocation remote = cell->remote_allocations[i];
-        if (remote.cpu > 0);
+        if (remote.resources.cpu > 0);
             // TODO: MANDAR AL AGENTE C REMOTO USANDO EL PUERTO Y LA IP RELEASE
-        if (remote.gpu > 0);
+        if (remote.resources.gpu > 0);
             // TODO: MANDAR AL AGENTE C REMOTO USANDO EL PUERTO Y LA IP RELEASE
-        if (remote.mem > 0);
+        if (remote.resources.mem > 0);
             // TODO: MANDAR AL AGENTE C REMOTO USANDO EL PUERTO Y LA IP RELEASE
     }
+
     free(cell->remote_allocations);
     hashmap_delete(job_map, &job_id);
 
     // TODO: HAY QUE RESPONDERLE A ERLANG??
 }
+
 // Handles an incoming job status from the erlang client
 // TIMEOUT -> ?????
 // GRANTED -> Estan los recursos disponibles (EN TODA LA RED) para que haga el job
 // DENIED -> TODO
 // IMPLEMENTACION: QUIEN SABE
-void handle_job_status(char** request_fields,int fd){
+void handle_job_status(char **request_fields, int fd)
+{
 
 }
+
 // Handles an incoming get nodes from the erlang client
 // IMPLEMENTACION: RECORRER NODE_MAP -> SEND LOS NODOS QUE HAYA EN LA RED
-void handle_get_nodes(char** request_fields,int fd){
+void handle_get_nodes(char **request_fields, int fd)
+{
 
 }
-
 
 // Closes the epoll instance
 int close_epoll(void)
