@@ -1,7 +1,6 @@
 // TODO LIST
 // - implement startup
 // - UDP socket broadcast
-// - add error messages
 // - implement parse_erlang_request
 // - handle unexpected disconnections using SIGPIPE (cuando te intentas
 //   conectar con TCP a algo y ese algo dejo de existir, te manda un error
@@ -374,13 +373,18 @@ void handle_c_agent(int fd)
     char buffer[BUFFER_MAX_SIZE];
     memset(buffer, 0, BUFFER_MAX_SIZE);
     ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE -1);
-    if (bytes_read <= 0);
-        // TODO (what do we do in case of error?)
-    else {
+    if (bytes_read <= 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return;
+
+        error("Error intentando leer de un agente de C");
+        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
+        close(fd);
+    } else {
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
-        Request request = parse_request(request_fields, length); // TODO
-        process_request(request, fd); // TODO
+        Request request = parse_request(request_fields, length);
+        process_request(request, fd);
     }
 }
 
@@ -589,9 +593,14 @@ void handle_erlang_client(int fd)
 {
     char buffer[BUFFER_MAX_SIZE] = { 0 };
     ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE - 1);
-    if (bytes_read <= 0);
-        // TODO error no bytes read
-    else {
+    if (bytes_read <= 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return;
+
+        error("Error intentando leer de un agente de C");
+        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
+        close(fd);
+    } else {
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
 
@@ -601,14 +610,15 @@ void handle_erlang_client(int fd)
             //char granted_buffer[BUFFER_MAX_SIZE] = { 0 };
             //sprintf(granted_buffer, "GRANTED %lld", atoi(request_fields[1]));
             //send(fd, granted_buffer, strlen(granted_buffer), 0);
-        } else if (streq(request_fields[0],"JOB_RELEASE"))
-            handle_job_release(request_fields,fd);
-        else if (streq(request_fields[0],"JOB_STATUS"))
-            handle_job_status(request_fields,fd);
-        else if (streq(request_fields[0],"GET_NODES"))
-            handle_get_nodes(request_fields,fd);
+        } else if (streq(request_fields[0], "JOB_RELEASE"))
+            handle_job_release(request_fields, fd);
+        else if (streq(request_fields[0], "JOB_STATUS"))
+            handle_job_status(request_fields, fd);
+        else if (streq(request_fields[0], "GET_NODES"))
+            handle_get_nodes(request_fields, fd);
         else {
-            // TODO: HANDLE ERROR
+            char *msg = "Error: comando desconocido";
+            send(fd, msg, strlen(msg), 0);
         }
     }
 }
@@ -623,7 +633,7 @@ void handle_job_request(char **request_fields, int request_fields_size, int fd)
     for (int i = 0; i < len; ++i) {
         int agent_fd = get_agent_connection(&parsed[i]);
         if (agent_fd == -1) {
-            // TODO: handle error
+            error("Error intentando conectarse a un nodo");
             return;
         }
 
@@ -683,7 +693,10 @@ void handle_job_release(char **request_fields, int fd)
     long long job_id = atoll(request_fields[1]);
     JobMapCell *cell = hashmap_search(job_map, &job_id);
     if (cell == NULL) {
-        // TODO: que pasa si el job no existe?
+        char error_buf[1024] = { 0 };
+        sprintf(error_buf, "Error: no existe el job con id %lld", job_id);
+        send(fd, error_buf, strlen(error_buf), 0);
+        return;
     }
 
     increase_resources(RES_KIND_CPU, cell->granted_resources.cpu);
@@ -763,7 +776,7 @@ void send_release_to_agent(const char *agent_ip, long long job_id, const char *r
 
     int fd = get_agent_connection(target_node);
     if (fd == -1) {
-        // TODO: handle error
+        error("Error intentando conectarse a un nodo");
         return;
     }
 
@@ -801,7 +814,6 @@ int get_agent_connection(NodeMapCell *node)
 
     // Add to epoll instance to listen for events
     if (add_descriptor(sock) < 0) {
-        // TODO: error message
         close(sock);
         return FAIL;
     }
