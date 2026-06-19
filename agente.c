@@ -31,9 +31,10 @@
 #include "ds/hashmap.h"
 #include "ds/queue.h"
 
-#define OK         0
-#define FAIL       -1
-#define PORT       12529
+#define OK          0
+#define FAIL        -1
+#define UDP_PORT    12529
+#define ERLANG_PORT 1337
 
 #define EPOLL_MAX_EVENTS     10
 #define EPOLL_TIMEOUT        -1
@@ -106,6 +107,7 @@ int connect_public_sock, connect_erlang_sock;
 int udp_broadcast_sock;
 int timer_fd;
 int epoll_fd, num_fds_ready;
+int agent_port;
 static int seconds_passed = 0;
 struct epoll_event ev, events[EPOLL_MAX_EVENTS];
 LocalResources node_resources;
@@ -149,8 +151,13 @@ int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
 
-int main()
+int main(int argc, char **argv)
 {
+    if (argc < 2)
+        agent_port = DEFAULT_PORT;
+    else
+        agent_port = atoi(argv[1]);
+
     if (init_sockets() < 0)
         return 1;
 
@@ -219,7 +226,7 @@ int init_agents_socket(void)
     struct sockaddr_in sa_public;
     memset(&sa_public, 0, sizeof(sa_public));
     sa_public.sin_family = AF_INET;
-    sa_public.sin_port = htons(PORT);
+    sa_public.sin_port = htons(agent_port);
     sa_public.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(listen_public_sock, (struct sockaddr *)&sa_public, sizeof(sa_public)) < 0) {
@@ -258,7 +265,7 @@ int init_listen_erlang_socket(void)
     struct sockaddr_in sa_erlang;
     memset(&sa_erlang, 0, sizeof(sa_erlang));
     sa_erlang.sin_family = AF_INET;
-    sa_erlang.sin_port = htons(PORT);
+    sa_erlang.sin_port = htons(ERLANG_PORT);
     sa_erlang.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     if (bind(listen_erlang_sock, (struct sockaddr *)&sa_erlang, sizeof(sa_erlang)) < 0) {
@@ -295,7 +302,7 @@ int init_udp_socket(void)
     struct sockaddr_in sa_udp;
     memset(&sa_udp, 0, sizeof(sa_udp));
     sa_udp.sin_family = AF_INET;
-    sa_udp.sin_port = htons(PORT);
+    sa_udp.sin_port = htons(UDP_PORT);
     sa_udp.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(udp_broadcast_sock, (struct sockaddr *)&sa_udp, sizeof(sa_udp)) < 0) {
