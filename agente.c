@@ -1,7 +1,6 @@
 // TODO LIST
 // - implement startup
 // - UDP socket broadcast
-// - fix memory leaks
 // - handle unexpected disconnections using SIGPIPE (cuando te intentas
 //   conectar con TCP a algo y ese algo dejo de existir, te manda un error
 //   de tipo SIGPIPE. y nada, eso es lo que tenemos que usar para manejar la
@@ -385,6 +384,7 @@ void handle_c_agent(int fd)
         char **request_fields = split(buffer, " ", &length);
         Request request = parse_request(request_fields, length);
         process_request(request, fd);
+        free(request_fields);
     }
 }
 
@@ -620,6 +620,8 @@ void handle_erlang_client(int fd)
             char *msg = "Error: comando desconocido";
             send(fd, msg, strlen(msg), 0);
         }
+
+        free(request_fields);
     }
 }
 
@@ -795,6 +797,7 @@ void handle_get_nodes(char **request_fields, int fd)
     }
 
     send(fd, buffer, strlen(buffer), 0);
+    free(buffer);
 }
 
 void send_release_to_agent(const char *agent_ip, long long job_id, const char *resource, int amount)
