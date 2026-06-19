@@ -176,12 +176,19 @@ manage_job_info(Socket, List_Nodes, Job_Id, Job_Info) ->
 % hacer un string "@"++IP_LIST[indice_ip]++":cpu:"++cuanto_pedir
 
 client_simulator(Scheduler) ->
-
+    Job_Request_Info = {rand:uniform(10),rand:uniform(10),rand:uniform(10)},
+    Scheduler ! {new_job, self(), Job_Request_Info},
     receive
-
+        {given_jobid, Job_Id} -> do_job(Job_Id, Scheduler);
+        _ -> client_simulator(Scheduler)
     end,
     client_simulator(Scheduler).
 
-%do_job() ->
-%    io:fwrite("I: ~p, am doing my job ~n", [self()]),
-%    timer:sleep(10000).
+do_job(Job_Id, Scheduler) ->
+    receive
+        valid_job -> sleep(10000),
+                     Scheduler ! {job_finished, Job_Id},
+                     client_simulator(Scheduler);
+        invalid_job -> client_simulator(Scheduler);
+        _ -> client_simulator(Scheduler)
+    end.
