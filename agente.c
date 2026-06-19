@@ -25,6 +25,7 @@
 
 #include "ds/hashmap.h"
 #include "ds/queue.h"
+#include "ds/list.h"
 
 #define OK           0
 #define FAIL         -1
