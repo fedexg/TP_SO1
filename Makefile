@@ -1,5 +1,5 @@
 CC=gcc
-C_SRC=agente.c ds/hashmap.c ds/queue.c
+C_SRC=agente.c ds/hashmap.c ds/queue.c ds/list.c
 C_OBJ=$(C_SRC:.c=.o)
 C_OUT=agente
 CFLAGS=-Wall -Werror -pthread
@@ -15,6 +15,9 @@ ds/hashmap.o: ds/hashmap.c
 
 ds/queue.o: ds/queue.c
 	$(CC) -c $^ $(CFLAGS) -o ds/queue.o
+
+ds/list.o: ds/list.c
+	$(CC) -c $^ $(CFLAGS) -o ds/list.o
 
 clean:
 	-rm $(C_OUT)
