@@ -1294,7 +1294,7 @@ void handle_udp_packet(int udp_fd)
     if (!streq(fields[0], "ANNOUNCE"))
         return;
 
-    char *ip = fields[1];
+    char *ip = inet_ntoa(addr.sin_addr);
     NodeMapCell *node = hashmap_search(node_map, &ip);
 
     if (node == NULL)
@@ -1302,14 +1302,14 @@ void handle_udp_packet(int udp_fd)
         return;
 
     // fields looks like
-    // [ANNOUNCE <ip> <port> cpu:<x> mem:<y> gpu:<z>]
+    // [ANNOUNCE <port> cpu:<x> mem:<y> gpu:<z>]
     //
-    // So take fields[3] + 4 to only get <x>
+    // So take fields[2] + 4 to only get <x>
     // Same with mem and gpu
     LocalResources resources = {
+        atoi(fields[2] + 4),
         atoi(fields[3] + 4),
         atoi(fields[4] + 4),
-        atoi(fields[5] + 4),
     };
 
     node->resources = resources;
