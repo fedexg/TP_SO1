@@ -178,7 +178,7 @@ bool find_in_list(List list, int id);
 void delete_from_timed_out_jobs(int id);
 void handle_get_nodes(ErlangRequest erl);
 void send_release_to_agent(const char *agent_ip, long long job_id, const char *resource, int amount);
-int get_agent_connection(NodeAllocationInfo *alloc);
+int get_agent_connection(const char *ip, int port);
 void check_agent_expiration_time(void);
 void handle_udp_packet(int udp_fd);
 int close_epoll(void);
@@ -1023,10 +1023,14 @@ void handle_job_request(ErlangRequest erl)
     // Ask agents for what we need
     for (int i = 0; i < len; ++i) {
         NodeAllocationInfo alloc = erl.node_allocations[i];
-        int agent_fd = get_agent_connection(&alloc);
+        int agent_fd = alloc.agent_fd;
         if (agent_fd == -1) {
-            error("Error intentando conectarse a un nodo");
-            return;
+            agent_fd = get_agent_connection(alloc.ip, alloc.port);
+
+            if (agent_fd == -1) {
+                error("Error intentando conectarse a un nodo");
+                return;
+            }
         }
 
         char msg[BUFFER_MAX_SIZE] = { 0 };
@@ -1070,10 +1074,10 @@ void handle_job_release(ErlangRequest erl)
         RemoteAllocation remote = cell->remote_allocations[i];
         if (remote.resources.current_cpu > 0)
             send_release_to_agent(remote.ip, job_id, "cpu", remote.resources.current_cpu);
-        if (remote.resources.current_gpu > 0)
-            send_release_to_agent(remote.ip, job_id, "gpu", remote.resources.current_gpu);
         if (remote.resources.current_mem > 0)
             send_release_to_agent(remote.ip, job_id, "mem", remote.resources.current_mem);
+        if (remote.resources.current_gpu > 0)
+            send_release_to_agent(remote.ip, job_id, "gpu", remote.resources.current_gpu);
     }
 
     free(cell->remote_allocations);
@@ -1187,7 +1191,6 @@ void handle_get_nodes(ErlangRequest erl)
 }
 
 // Sends a RELEASE message to the C agent specified
-// TODO: refactor pls!
 void send_release_to_agent(const char *agent_ip, long long job_id, const char *resource, int amount)
 {
     NodeMapCell *target_node = hashmap_search(node_map, &agent_ip);
@@ -1196,7 +1199,7 @@ void send_release_to_agent(const char *agent_ip, long long job_id, const char *r
     if (target_node == NULL)
         return;
 
-    int fd = get_agent_connection(target_node);
+    int fd = get_agent_connection(target_node->ip, target_node->port);
     if (fd == -1) {
         error("Error intentando conectarse a un nodo");
         return;
@@ -1209,12 +1212,8 @@ void send_release_to_agent(const char *agent_ip, long long job_id, const char *r
 }
 
 // Get file descriptor of agent which we need to send messages to
-int get_agent_connection(NodeAllocationInfo *alloc)
+int get_agent_connection(const char *ip, int port)
 {
-    // If connection is up, reuse it
-    if (alloc->agent_fd != -1)
-        return alloc->agent_fd;
-
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0)
         return FAIL;
@@ -1225,8 +1224,8 @@ int get_agent_connection(NodeAllocationInfo *alloc)
     struct sockaddr_in agent_addr;
     memset(&agent_addr, 0, sizeof(agent_addr));
     agent_addr.sin_family = AF_INET;
-    agent_addr.sin_port = htons(alloc->port);
-    inet_pton(AF_INET, alloc->ip, &agent_addr.sin_addr);
+    agent_addr.sin_port = htons(port);
+    inet_pton(AF_INET, ip, &agent_addr.sin_addr);
 
     // We check if errno is EINPROGRESS because sock is non-blocking.
     int res = connect(sock, (struct sockaddr *)&agent_addr, sizeof(agent_addr));
@@ -1241,7 +1240,6 @@ int get_agent_connection(NodeAllocationInfo *alloc)
         return FAIL;
     }
 
-    alloc->agent_fd = sock;
     return sock;
 }
 
