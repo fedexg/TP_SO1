@@ -154,9 +154,11 @@ Request *request_dup(Request *req);
 void handle_erlang_client(int erlang_client_fd);
 void handle_job_request(char **request_fields, int request_fields_size, int fd);
 NodeMapCell *parse_erlang_request(char **request_fields, int request_fields_size, int fd, int *len);
-void find_requested_parameters(char **request_fields, int request_fields_size, char *resource, int *amount);
 void handle_job_release(char **request_fields, int fd);
 void handle_job_status(char **request_fields, int fd);
+bool find_in_queue(Queue queue, int id);
+bool find_in_list(List list, int id);
+void delete_from_timed_out_jobs(int id);
 void handle_get_nodes(char **request_fields, int fd);
 void send_release_to_agent(const char *agent_ip, long long job_id, const char *resource, int amount);
 int get_agent_connection(NodeMapCell *node);
@@ -166,12 +168,6 @@ int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
 LocalResources get_initial_resources(void);
-
-// Acomoda estas funciones y sus definiciones donde quieras Lauren
-int find_in_queue(Queue queue,int id);
-int find_in_list(List list, int id);
-void delete_from_timed_out_jobs(int id);
-//.
 
 int main(int argc, char **argv)
 {
@@ -1114,46 +1110,44 @@ void handle_job_status(char **request_fields, int fd)
 
 // Function that only works with the following implementation: (queue of void* data that stores a JobQueueData structure)
 // Given a queue that satisfies the criteria above, returns 1 if there is a node in which JobQueueData.job_cell.job_id == id, 0 if not
-int find_in_queue(Queue queue,int id){
-    int is_found = 0;
-    for(QueueNode* actual_node = queue;actual_node != NULL;actual_node = actual_node->next){
-        JobQueueData* job = (JobQueueData*)actual_node->data;
-        if (job->job_cell.job_id == id){
-            is_found = 1;
-            break;
-        }
+bool find_in_queue(Queue queue, int id)
+{
+    for (QueueNode* actual_node = queue; actual_node != NULL; actual_node = actual_node->next) {
+        JobQueueData *job = (JobQueueData *)actual_node->data;
+        if (job->job_cell.job_id == id)
+            return true;
     }
-    return is_found;
+
+    return false;
 }
 
 // Function that only works with the following implementation: (list of void* data that stores an int* job_id)
 // Given a list that satisfies the criteria above, returns 1 if there is a node with id as *job_iid, 0 if no such node exists.
-int find_in_list(List list, int id){
-    int is_found = 0;
-    for (ListNode* actual_node = list;actual_node != NULL;actual_node = actual_node->next){
-        int *job_id = (int*)actual_node->data;
-        if (*job_id == id){
-            is_found = 1;
-            break;
-        }
+bool find_in_list(List list, int id)
+{
+    for (ListNode *actual_node = list; actual_node != NULL; actual_node = actual_node->next) {
+        int job_id = *(int *)actual_node->data;
+        if (job_id == id)
+            return true;
     }
-    return is_found;
+
+    return false;
 }
 
 // Given the timed_out_jobs list (which stores a job_id &int in data)
 // deletes the node whose *job_id is equal to id
-void delete_from_timed_out_jobs(int id){
-    ListNode* node_before = timed_out_jobs;
+void delete_from_timed_out_jobs(int id)
+{
+    ListNode *node_before = timed_out_jobs;
     if (*(int*)node_before->data == id){
         free(node_before->data);
         timed_out_jobs = timed_out_jobs->next;
         free(node_before);
-    }
-    else{
-        ListNode* actual_node = timed_out_jobs->next;
-        for(;*(int*)actual_node->data != id && actual_node != NULL;actual_node = actual_node->next)
+    } else {
+        ListNode *actual_node = timed_out_jobs->next;
+        for(; *(int*)actual_node->data != id && actual_node != NULL; actual_node = actual_node->next)
             node_before = node_before->next;
-        if (actual_node != NULL){
+        if (actual_node != NULL) {
             node_before->next = actual_node->next;
             free(actual_node->data);
             free(actual_node);
