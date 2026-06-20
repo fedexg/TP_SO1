@@ -1060,6 +1060,10 @@ void handle_job_request(ErlangRequest erl)
     }
 
     if (num_granted < erl.num_allocations) {
+        memset(msg, 0, BUFFER_MAX_SIZE - 1);
+        sprintf(msg, "JOB_DENIED %lld", job_id);
+        send(erl.erlang_fd, msg, strlen(msg), 0);
+
         for (ListNode *p = agent_fds; p != NULL; p = p->next) {
             for (int i = 0; i < erl.num_allocations; ++i) {
                 NodeAllocationInfo alloc = erl.node_allocations[i];
@@ -1071,9 +1075,6 @@ void handle_job_request(ErlangRequest erl)
                 }
             }
         }
-        memset(msg, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(msg, "JOB_DENIED %lld", job_id);
-        send(erl.erlang_fd, msg, strlen(msg), 0);
 
         enqueue(job_queue, &erl, (QueueCpyFunc)job_copy);
         return;
