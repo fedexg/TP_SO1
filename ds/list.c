@@ -1,7 +1,7 @@
 #include "list.h"
 #include <stdlib.h>
 
-ListNode *new_node(void *data, ListNode *next, ListCpyFunc cpy);
+ListNode *new_list_node(void *data, ListNode *next, ListCpyFunc cpy);
 
 List list_make(void)
 {
@@ -27,13 +27,13 @@ int list_empty(List l)
 List list_append(List l, void *data, ListCpyFunc cpy)
 {
     if (list_empty(l))
-        return new_node(data, NULL, cpy);
+        return new_list_node(data, NULL, cpy);
 
     l->next = list_append(l->next, data, cpy);
     return l;
 }
 
-ListNode *new_node(void *data, ListNode *next, ListCpyFunc cpy)
+ListNode *new_list_node(void *data, ListNode *next, ListCpyFunc cpy)
 {
     ListNode *node = malloc(sizeof(ListNode));
     node->data = cpy(data);
