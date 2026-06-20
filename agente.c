@@ -1060,10 +1060,10 @@ void handle_job_request(ErlangRequest erl)
     }
 
     if (num_granted < erl.num_allocations) {
-        for (ListNode *penis = agent_fds; penis != NULL; penis = penis->next) {
+        for (ListNode *p = agent_fds; p != NULL; p = p->next) {
             for (int i = 0; i < erl.num_allocations; ++i) {
                 NodeAllocationInfo alloc = erl.node_allocations[i];
-                if (*(int *)penis->data == alloc.agent_fd) {
+                if (*(int *)p->data == alloc.agent_fd) {
                     Request req = {erl.job_id, REQUEST_KIND_RELEASE, alloc.res_kind, alloc.amount};
                     char buffer[BUFFER_MAX_SIZE]  = { 0 };
                     sprintf(buffer, "RELEASE %lld", job_id);
