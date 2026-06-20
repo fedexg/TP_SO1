@@ -42,6 +42,9 @@
 #define MAX_MEM 16384
 #define BUFFER_MAX_SIZE 128
 
+#define CHECKER_QUEUE_USE_TIME          5
+#define CHECKER_QUEUE_TIME_UNTIL_DELETE 15.0
+
 #define streq(a, b) (strcmp((a), (b)) == 0)
 
 typedef enum {
@@ -145,7 +148,9 @@ void job_free(JobQueueData *j);
 int *int_copy(int *x);
 
 // General functions
-void sigpipe_handler(int s);
+void *worker_thread_handler(void *arg);
+void *checker_thread_handler(void *arg);
+void delete_from_job_queue(JobQueueData *job);
 void error(const char *msg);
 int init_sockets(void);
 int init_agents_socket(void);
@@ -208,6 +213,16 @@ int main(int argc, char **argv)
     if (startup() < 0)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
+    pthread_t worker_thread;
+    if (pthread_create(&worker_thread, NULL, worker_thread_handler, NULL) < 0)
+        return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
+
+    pthread_t checker_thread;
+    if (pthread_create(&checker_thread, NULL, checker_thread_handler, NULL) < 0)
+        return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
+
+    pthread_join(checker_thread, NULL);
+
     pthread_t epoll_thread;
     if (pthread_create(&epoll_thread, NULL, epoll_handler, NULL) < 0)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
@@ -221,6 +236,39 @@ int main(int argc, char **argv)
         return 1;
 
     return 0;
+}
+
+void *worker_thread_handler(void *arg)
+{
+    while (true) {
+        if (job_queue != NULL) {
+            ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
+            handle_job_request(erl);
+            job_queue = dequeue(job_queue, (QueueFreeFunc)job_queue);
+        }
+    }
+
+    return NULL;
+}
+
+void *checker_thread_handler(void *arg)
+{
+    while (true) {
+        // If agent must use job_queue, give it time to do so
+        sleep(CHECKER_QUEUE_USE_TIME);
+        for (QueueNode *p = job_queue; p != NULL; p = p->next) {
+            JobQueueData *job = (JobQueueData *)p->data;
+            if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE)
+                delete_from_job_queue(job);
+        }
+    }
+
+    return NULL;
+}
+
+void delete_from_job_queue(JobQueueData *job)
+{
+    // TODO
 }
 
 JobQueueData *job_copy(JobQueueData *j)
@@ -995,7 +1043,6 @@ void handle_job_request(ErlangRequest erl)
 
     char msg[BUFFER_MAX_SIZE] = { 0 };
     long long job_id = erl.job_id;
-    int len = 0;
     LocalResources res = get_initial_resources();
 
     int cpu = 0, mem = 0, gpu = 0;
@@ -1068,7 +1115,6 @@ void handle_job_request(ErlangRequest erl)
             for (int i = 0; i < erl.num_allocations; ++i) {
                 NodeAllocationInfo alloc = erl.node_allocations[i];
                 if (*(int *)p->data == alloc.agent_fd) {
-                    Request req = {erl.job_id, REQUEST_KIND_RELEASE, alloc.res_kind, alloc.amount};
                     char buffer[BUFFER_MAX_SIZE]  = { 0 };
                     sprintf(buffer, "RELEASE %lld", job_id);
                     send(alloc.agent_fd, buffer, strlen(buffer), 0);
