@@ -1,8 +1,5 @@
 // TODO LIST
 // - deadlock prevention (timeouts, timerfd)
-// - handle enqueued requests when REQUEST_KIND_RELEASE (tener una cola que guarde
-//   requests completas, fijarnos si hay recursos para el request y fijarse si
-//   grant o deny)
 
 #include <assert.h>
 #include <arpa/inet.h>
@@ -99,14 +96,28 @@ typedef struct _JobMapCell {
 typedef struct JobQueueData {
     JobMapCell job_cell;
     time_t time_when_alloc;
+    char **request_fields;
 } JobQueueData;
 
 typedef struct _Request {
     long long job_id;
     RequestKind kind;
     ResourceKind res_kind;
-    int amount;       
+    int amount;
 } Request;
+
+typedef struct _NodeAllocationInfo {
+    char ip[16];
+    ResourceKind res_kind;
+    int amount;
+} NodeAllocationInfo;
+
+typedef struct _ErlangRequest {
+    int fd;
+    long long job_id;
+    NodeAllocationInfo *node_allocations;
+    int num_allocations;
+} ErlangRequest;
 
 int listen_public_sock, listen_erlang_sock;
 int connect_public_sock, connect_erlang_sock;
@@ -798,10 +809,16 @@ void process_request(Request req, int fd)
 
         if (cell->granted_resources.current_cpu == 0 && cell->granted_resources.current_gpu == 0 &&
             cell->granted_resources.current_mem) {
-            hashmap_delete(job_map,&req.job_id);
+            hashmap_delete(job_map, &req.job_id);
             free(cell);
         } else
             hashmap_put(job_map, &cell);
+
+        while (!queue_empty(job_queue)) {
+            ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
+            job_queue = dequeue(job_queue, (QueueFreeFunc)job_free);
+            handle_job_request(erl);
+        }
 
         break;
     default:
@@ -958,12 +975,7 @@ void handle_job_request(char **request_fields, int request_fields_size, int fd)
         sprintf(msg, "JOB_DENIED %lld", job_id);
         send(fd, msg, strlen(msg), 0);
 
-        JobQueueData job = {
-            (JobMapCell){ job_id, 0, NULL, (LocalResources){ 0 } },
-            time(NULL)
-        };
-
-        enqueue(job_queue, &job, (QueueCpyFunc)job_copy);
+        enqueue(job_queue, &erl, (QueueCpyFunc)job_copy);
         return;
     }
 
