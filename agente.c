@@ -142,6 +142,7 @@ List timed_out_jobs;
 // Job queue information
 JobQueueData *job_copy(JobQueueData *j);
 void job_free(JobQueueData *j);
+int *int_copy(int *x);
 
 // General functions
 void sigpipe_handler(int s);
@@ -242,6 +243,13 @@ void job_free(JobQueueData *j)
 {
     free(j->job_cell.remote_allocations);
     free(j);
+}
+
+int *int_copy(int *x)
+{
+    int *p = malloc(sizeof(int));
+    *p = *x;
+    return p;
 }
 
 void error(const char *msg)
@@ -978,6 +986,8 @@ ErlangRequest parse_erlang_request(char **request_fields, int request_fields_siz
     return erl;
 }
 
+
+
 // Handles an incoming job request from the erlang client
 void handle_job_request(ErlangRequest erl)
 {
@@ -1011,17 +1021,10 @@ void handle_job_request(ErlangRequest erl)
         return;
     }
 
-    if (cpu > res.current_cpu || mem > res.current_mem || gpu > res.current_gpu) {
-        memset(msg, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(msg, "JOB_DENIED %lld", job_id);
-        send(erl.erlang_fd, msg, strlen(msg), 0);
-
-        enqueue(job_queue, &erl, (QueueCpyFunc)job_copy);
-        return;
-    }
-
     // Ask agents for what we need
-    for (int i = 0; i < len; ++i) {
+    int num_granted = 0;
+    List agent_fds = list_make();
+    for (int i = 0; i < erl.num_allocations; ++i) {
         NodeAllocationInfo alloc = erl.node_allocations[i];
         int agent_fd = alloc.agent_fd;
         if (agent_fd == -1) {
@@ -1046,6 +1049,34 @@ void handle_job_request(ErlangRequest erl)
         // Send RESERVE message based on what we found
         sprintf(msg, "RESERVE %lld %s %d", job_id, resource, alloc.amount);
         send(agent_fd, msg, strlen(msg), 0);
+
+        // Count how many granteds we received
+        char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
+        recv(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1, 0);
+        if (strncmp(recv_buffer, "GRANTED", 7) == 0) {
+            ++num_granted;
+            agent_fds = list_append(agent_fds, &agent_fd, (ListCpyFunc)int_copy);
+        }
+    }
+
+    if (num_granted < erl.num_allocations) {
+        for (ListNode *penis = agent_fds; penis != NULL; penis = penis->next) {
+            for (int i = 0; i < erl.num_allocations; ++i) {
+                NodeAllocationInfo alloc = erl.node_allocations[i];
+                if (*(int *)penis->data == alloc.agent_fd) {
+                    Request req = {erl.job_id, REQUEST_KIND_RELEASE, alloc.res_kind, alloc.amount};
+                    char buffer[BUFFER_MAX_SIZE]  = { 0 };
+                    sprintf(buffer, "RELEASE %lld", job_id);
+                    send(alloc.agent_fd, buffer, strlen(buffer), 0);
+                }
+            }
+        }
+        memset(msg, 0, BUFFER_MAX_SIZE - 1);
+        sprintf(msg, "JOB_DENIED %lld", job_id);
+        send(erl.erlang_fd, msg, strlen(msg), 0);
+
+        enqueue(job_queue, &erl, (QueueCpyFunc)job_copy);
+        return;
     }
 
     memset(msg, 0, BUFFER_MAX_SIZE - 1);
@@ -1225,6 +1256,7 @@ int get_agent_connection(const char *ip, int port)
     memset(&agent_addr, 0, sizeof(agent_addr));
     agent_addr.sin_family = AF_INET;
     agent_addr.sin_port = htons(port);
+
     inet_pton(AF_INET, ip, &agent_addr.sin_addr);
 
     // We check if errno is EINPROGRESS because sock is non-blocking.
