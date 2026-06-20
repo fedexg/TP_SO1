@@ -1081,7 +1081,7 @@ void handle_job_request(ErlangRequest erl)
     }
 
     memset(msg, 0, BUFFER_MAX_SIZE - 1);
-    sprintf(msg, "JOB_GRANTEED %lld", job_id);
+    sprintf(msg, "JOB_GRANTED %lld", job_id);
     send(erl.erlang_fd, msg, strlen(msg), 0);
 }
 
