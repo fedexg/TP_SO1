@@ -1,0 +1,53 @@
+QUE ESTAMOS HACIENDO?: 
+Simulamos un cluster de computadoras conectadas entre si, para otorgar recursos a distintos
+trabajos a realizar, 
+
+ERLANG:
+erlang simula simultaneamente dos roles distintos en el cluster de computadoras.
+- El/Los cliente/s: Un agente externo (manual o atomatico) que pide recursos a un scheduler
+para poder trabajar.
+- El Scheduler: Un programa manager, que constantemente se pone en contacto con el agente c (distribuidor
+de recursos) para asignarle recursos a los trabajos pedidos entrantes. 
+  La asignacion de recursos realizado por el Scheduler, debe poder demostrar solucionar deadlocks. O sea, 
+por lo menos, el ejemplo pasado en la consigna del trabajo final debe estar solucionado.
+  Una forma de simular este "job" que realiza un cliente, es que al recibir un GRANTED del trabajo deceado, el cliente
+puede "quedarse trabajando" esperando con un timer una cantidad n de tiempo. Al finalizar su trabajo, puede avisarle al
+scheduler que terminó, así el scheduler puede liberar esos recursos solicitados.
+
+AGENTE C:
+el agente c simula un gestor de recursos que obtiene de "nodos". Los cuales no son mas que estructuras tipo recursos:ip 
+que tienen alma
+
+El agente c se comunica de dos formas distintas, en dos contextos distintos respectivos:
+Agente C <-> Scheduler Erlang: 
+    El Erlang Sch. se comunica localmente, por un puerto fijo, al Agente C alojado en su misma computadora.
+    Un pedido de un cliente se movera de la forma; Cliente -> SCheduler -> Agente C; es decir, un pedido
+    de un cliente será traducido por el Sch. Erlang, y luego ese pedido procesado será enviado al Agente C.
+      El cliente sabrá si su pedido fue rechazado, o no, por el Sch. Erlang. El criterio que usa para traducir
+    los pedidos el Sch. Erlang está detallado en su respectiva seccion. Por otro lado, Erlang tiene 3 posibles
+    envios al Agente C:
+        <Job_Request> : Que será enviado junto a <ID_JOB>, y una seríe de especificaciones. 
+        Las especificaciones son resultado de una "traduccion" del pedido original del cliente que hace
+        el Sch. Erlang.
+        <Job_Release> : Que será enviado junto a <ID_JOB>. El resultado  esperado es la liberacion de los 
+        recursos asignados a ese trabajo. Este mensaje es estrictamente enviado cuando el Sch. Erlang sabe
+        que el trabajo fue atendido. 
+        <Job_Status> : Que será enviado junto a <ID_JOB>. El resultado esperado es una respuesta directa del
+        Agente C, sobre el estado actual del trabajo de Id indicado. 
+          Las respuestas posibles son:
+            <Job_Granted> : El trabajo fue atendido y se le recervó los recursos pedidos al cliente.
+            <Job_Denied> :  El trabajo fue aplazado. Los recursos pedidos no estaban disponibles, por lo
+            que fueron encolados a espera de poder ser atendidos.
+            <Job_TimeOut> : El trabajo fue cancelado durante su espera a ser atendido. El tiempo de espera
+            fue excedido, por lo que el Agente C decidio eliminarlo para evitar desbordar la cola.
+
+debe ser
+Agente C <-> Otro Agente C:   
+
+Al TESTEA EL DEADLOCK: 
+- El puerto debe ser distinto entre las dos intancias del agente, para que al bindiearlo no lanze error.
+
+Si tenes unas situacion donde dos nodos necesitan recursos del otro mutuamente, el agente debe poder 
+solucionar ésta situacion de deadlock. La solucion mas facil y recomendada, es la de un time_out, la cual
+plantea que si un job en proceso de iniciar, no logra comenzar un tiempo determinado, este termina cancelado o
+aplazado para mas tarde devolviendolo a la cola. 
