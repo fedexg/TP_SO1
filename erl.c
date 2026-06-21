@@ -25,6 +25,7 @@ int get_agent_connection(const char *ip, int port, int epoll_fd);
 void handle_erlang_client(Hashmap node_map, Hashmap job_map,
                           Queue job_queue, List timed_out_jobs,
                           LocalResources *node_resources,
+                          MutexCond protection,
                           int erlang_fd, int epoll_fd)
 {
     char buffer[BUFFER_MAX_SIZE] = { 0 };
@@ -42,7 +43,7 @@ void handle_erlang_client(Hashmap node_map, Hashmap job_map,
         ErlangRequest erl = parse_erlang_request(node_map, request_fields, length, erlang_fd);
 
         if (streq(request_fields[0], "JOB_REQUEST"))
-            handle_job_request(node_map, job_queue, erl, epoll_fd);
+            handle_job_request(node_map, job_queue, erl, protection, epoll_fd);
         else if (streq(request_fields[0], "JOB_RELEASE"))
             handle_job_release(node_map, job_map, node_resources, erl, epoll_fd);
         else if (streq(request_fields[0], "JOB_STATUS"))
@@ -60,6 +61,7 @@ void handle_erlang_client(Hashmap node_map, Hashmap job_map,
 
 // Handles an incoming job request from the erlang client
 void handle_job_request(Hashmap node_map, Queue job_queue, ErlangRequest erl,
+                        MutexCond protection,
                         int epoll_fd)
 {
     char msg[BUFFER_MAX_SIZE] = { 0 };
@@ -144,6 +146,7 @@ void handle_job_request(Hashmap node_map, Queue job_queue, ErlangRequest erl,
         }
 
         enqueue(job_queue, &erl, (QueueCpyFunc)job_copy);
+        pthread_cond_signal(&protection.nonempty_queue_cond);
         return;
     }
 

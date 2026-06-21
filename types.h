@@ -1,6 +1,7 @@
 #ifndef TYPES_H
 #define TYPES_H
 
+#include <pthread.h>
 #include <time.h>
 #include "const.h"
 #include "ds/hashmap.h"
@@ -70,6 +71,12 @@ typedef struct JobQueueData {
     ErlangRequest request;
     time_t time_when_alloc;
 } JobQueueData;
+
+// Pair of mutex and condition variable
+typedef struct MutexCond {
+    pthread_mutex_t mutex;
+    pthread_cond_t nonempty_queue_cond;
+} MutexCond;
 
 NodeMapCell *node_cell_copy(NodeMapCell *nmp);
 int node_cell_cmp(NodeMapCell *nmp1, NodeMapCell *nmp2);
