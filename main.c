@@ -70,7 +70,7 @@ int main(int argc, char **argv)
 
     // TODO:
     // Implement hash for node_map
-    // Implement copy, cmp, free and hash for job_map
+    // Implement hash for job_map
     node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy, (CmpFunc)node_cell_cmp, (FreeFunc)node_cell_free, HashFunc hash); 
     job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy, (CmpFunc)job_cell_cmp, (FreeFunc)job_cell_free, HashFunc hash);
 
