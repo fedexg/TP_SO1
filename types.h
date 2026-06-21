@@ -40,12 +40,6 @@ typedef struct _JobMapCell {
     LocalResources granted_resources;
 } JobMapCell;
 
-typedef struct JobQueueData {
-    JobMapCell job_cell;
-    time_t time_when_alloc;
-    char **request_fields;
-} JobQueueData;
-
 // Represents C agent request
 typedef struct _Request {
     long long job_id;
@@ -70,6 +64,12 @@ typedef struct _ErlangRequest {
     NodeAllocationInfo *node_allocations;
     int num_allocations;
 } ErlangRequest;
+
+// The data element of job_queue
+typedef struct JobQueueData {
+    ErlangRequest request;
+    time_t time_when_alloc;
+} JobQueueData;
 
 NodeMapCell *node_cell_copy(NodeMapCell* nmp);
 int node_cell_cmp(NodeMapCell* nmp1, NodeMapCell* nmp2);

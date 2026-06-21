@@ -60,26 +60,26 @@ void job_cell_free(JobMapCell* jmc){
 // End of job_map void* handling logic
 
 // Start of job_queue void* handling logic
-// TODO: Modify job_cell_copy, job_cell_cmp and job_cell_free to comply with ErlangRequest
 JobQueueData *job_copy(JobQueueData *j)
 {
-    long long job_id = j->job_cell.job_id;
-    int num_remotely_allocated = j->job_cell.num_remotely_allocated;
-    RemoteAllocation *remote_allocations = j->job_cell.remote_allocations;
+    int erlang_fd = j->request.erlang_fd;
+    long long job_id = j->request.job_id;
+    int num_allocations = j->request.num_allocations;
+    NodeAllocationInfo *node_allocations = j->request.node_allocations;
     time_t time_when_alloc = j->time_when_alloc;
 
     JobQueueData *cloned = malloc(sizeof(JobQueueData));
-    cloned->job_cell.job_id = job_id;
-    cloned->job_cell.num_remotely_allocated = num_remotely_allocated;
-    cloned->job_cell.remote_allocations = calloc(num_remotely_allocated, sizeof(RemoteAllocation));
-    memcpy(cloned->job_cell.remote_allocations, remote_allocations, num_remotely_allocated);
-    cloned->time_when_alloc = time_when_alloc;
+    cloned->request.erlang_fd = erlang_fd;
+    cloned->request.job_id = job_id;
+    cloned->request.num_allocations = num_allocations;
+    cloned->request.node_allocations = calloc(num_allocations,sizeof(NodeAllocationInfo));
+    memcpy(cloned->request.node_allocations,node_allocations,num_allocations);
     return cloned;
 }
 
 void job_free(JobQueueData *j)
 {
-    free(j->job_cell.remote_allocations);
+    free(j->request.node_allocations);
     free(j);
 }
 

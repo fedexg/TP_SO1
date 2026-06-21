@@ -219,7 +219,7 @@ bool find_in_queue(Queue queue, int id)
 {
     for (QueueNode* actual_node = queue; actual_node != NULL; actual_node = actual_node->next) {
         JobQueueData *job = (JobQueueData *)actual_node->data;
-        if (job->job_cell.job_id == id)
+        if (job->request.job_id== id)
             return true;
     }
 

@@ -92,19 +92,6 @@ void process_request(Hashmap node_map, Hashmap job_map,
             hashmap_put(job_map, &cell);
 
         while (!queue_empty(job_queue)) {
-            // TODO: this doesn't type :/ 
-            // TODO: Fijemonos que esta pasando aca
-            // Si un agente c recibe RELEASE de otro agente C, es que el agente C que envio el release
-            // quiere que el job muera por orden del planificador erlang, o el job fue denegado y metido en la cola, 
-            // entonces tenemos que, desde este agente C, trabajar con el siguiente job.
-            // Osea que lo que hay que hacer es:
-            // conseguir el head de la job_queue (que guarda datos tipo JobQueueData{ JobMapCell job_cell;time_t time_when_alloc;char **request_fields;})
-            // Con este head hay que hacer alguna transformacion para pasarlo a handle_job_request como un erl 
-            // Obs: lo que JobQueueData ya no es representativo con la logica actual del programa (usando ErlangRequest), habria que cambiar la estructura, no?
-            // Obs2: por lo de arriba, la implementacion de job_copy es obsoleta
-            // Desencolar
-            // Trabajar con el siguiente job encolado
-            // Hay que llamar a handle_job_request?
             ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
             job_queue = dequeue(job_queue, (QueueFreeFunc)job_free);
             handle_job_request(node_map, job_queue, erl, epoll_fd);
