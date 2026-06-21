@@ -103,27 +103,9 @@ void process_request(Hashmap node_map, Hashmap job_map,
     }
 }
 
-void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
-                                     LocalResources *node_resources, int fd)
+void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
+                           LocalResources *node_resources)
 {
-    NodeMapCell *dead_node = NULL;
-
-    // Find dead node file descriptor
-    for (int i = 0; i < node_map->cap; ++i) {
-        bool exists_item = node_map->items[i].data != NULL && !node_map->items[i].deleted;
-        if (exists_item) {
-            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
-            if (node->socket_fd == fd) {
-                dead_node = node;
-                break;
-            }
-        }
-    }
-
-    if (dead_node == NULL)
-        return;
-
-    // Find affected jobs
     for (int i = 0; i < job_map->cap; ++i) {
         bool exists_job = job_map->items[i].data != NULL && !job_map->items[i].deleted;
         if (exists_job) {
@@ -133,7 +115,7 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
             // Check if job depended on dead node
             for (int j = 0; j < job->num_remotely_allocated; ++j) {
                 RemoteAllocation *remote = &job->remote_allocations[j];
-                if (streq(remote->ip, dead_node->ip) &&
+                if (streq(remote->ip, node->ip) &&
                         ((remote->resources.current_cpu > 0) ||
                         (remote->resources.current_mem > 0)  ||
                         (remote->resources.current_gpu > 0))) {
@@ -174,6 +156,29 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
             }
         }
     }
+}
+
+void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
+                                     LocalResources *node_resources, int fd)
+{
+    NodeMapCell *dead_node = NULL;
+
+    // Find dead node file descriptor
+    for (int i = 0; i < node_map->cap; ++i) {
+        bool exists_item = node_map->items[i].data != NULL && !node_map->items[i].deleted;
+        if (exists_item) {
+            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
+            if (node->socket_fd == fd) {
+                dead_node = node;
+                break;
+            }
+        }
+    }
+
+    if (dead_node == NULL)
+        return;
+
+    release_affected_jobs(dead_node, node_map, job_map, node_resources);
 
     hashmap_delete(node_map, &dead_node->ip);
     free(dead_node);

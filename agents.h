@@ -12,5 +12,8 @@ void handle_c_agent(int c_agent_fd,
 void process_request(Hashmap node_map, Hashmap job_map, Request req,
                      LocalResources *node_resources, Queue job_queue,
                      int fd, int epoll_fd);
+void release_affected_jobs(NodeMapCell *node,
+                           Hashmap node_map, Hashmap job_map,
+                           LocalResources *node_resources);
 
 #endif // AGENTS_H

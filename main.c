@@ -68,8 +68,8 @@ int main(int argc, char **argv)
     node_resources.current_gpu = node_resources.gpu;
     node_resources.current_mem = node_resources.mem;
 
-    node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy, (CmpFunc)node_cell_cmp, (FreeFunc)node_cell_free, node_cell_hash); 
-    job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy, (CmpFunc)job_cell_cmp, (FreeFunc)job_cell_free, job_cell_hash);
+    node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy, (CmpFunc)node_cell_cmp, (FreeFunc)node_cell_free, (HashFunc)node_cell_hash); 
+    job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy, (CmpFunc)job_cell_cmp, (FreeFunc)job_cell_free, (HashFunc)job_cell_hash);
 
     job_queue = queue_make();
 
@@ -490,6 +490,17 @@ void check_agent_expiration_time(void)
                 // del cluster, en cuyo caso handle_unexpected_disconnection ya hace todo lo necesario,
                 // O puede ocurrir que un nodo no se comunique por 15 segundos por algo que no sea una desconexion
                 // inesperada? En cuyo caso habria que repetir casi todo el codigo de handle_unexpected_disconnection
+                //
+                // Encontrar el nodo cagado
+                // Recorrer los jobs
+                // Mandar release a los que lo requieren
+                //
+                //
+                // IDEA: nigger
+                // Recorrer el hm de jobs
+                //   Si encontramos un job en el que participa el nodo cagado
+                //
+                release_affected_jobs(node, node_map, job_map, &node_resources);
                 hashmap_delete(node_map, node);
             }
         }
