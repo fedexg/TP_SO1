@@ -53,6 +53,7 @@ JobMapCell *job_cell_copy(JobMapCell* jmc)
     cloned->num_remotely_allocated = num_remotely_allocated;
     cloned->remote_allocations = calloc(num_remotely_allocated,sizeof(RemoteAllocation));
     memcpy(cloned->remote_allocations, remote_allocations, num_remotely_allocated);
+    cloned->granted_resources = granted_resources;
     return cloned;
 }
 
@@ -87,6 +88,7 @@ JobQueueData *job_copy(JobQueueData *j)
     cloned->request.num_allocations = num_allocations;
     cloned->request.node_allocations = calloc(num_allocations, sizeof(NodeAllocationInfo));
     memcpy(cloned->request.node_allocations, node_allocations, num_allocations);
+    cloned->time_when_alloc = time_when_alloc;
 
     return cloned;
 }
