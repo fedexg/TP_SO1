@@ -59,3 +59,24 @@ void increase_resources(LocalResources *res, ResourceKind kind, int amount)
     }
 }
 
+// Get total resources of all nodes
+LocalResources get_initial_resources(Hashmap node_map)
+{
+    LocalResources res = { 0 };
+    for (int i = 0; i < node_map->cap; ++i) {
+        bool exists_item = node_map->items[i].data != NULL &&
+                            !node_map->items[i].deleted;
+        if (exists_item) {
+            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
+            res.cpu += node->resources.cpu;
+            res.mem += node->resources.mem;
+            res.gpu += node->resources.gpu;
+
+            res.current_cpu += node->resources.current_cpu;
+            res.current_mem += node->resources.current_mem;
+            res.current_gpu += node->resources.current_gpu;
+        }
+    }
+
+    return res;
+}

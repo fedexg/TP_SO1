@@ -71,7 +71,6 @@ void handle_udp_packet(int udp_fd);
 int close_epoll(void);
 int close_sockets(void);
 int cleanup(int flags);
-LocalResources get_initial_resources(void);
 
 int main(int argc, char **argv)
 {
@@ -679,7 +678,7 @@ void handle_job_request(ErlangRequest erl)
 
     char msg[BUFFER_MAX_SIZE] = { 0 };
     long long job_id = erl.job_id;
-    LocalResources res = get_initial_resources();
+    LocalResources res = get_initial_resources(node_map);
 
     int cpu = 0, mem = 0, gpu = 0;
 
@@ -1064,25 +1063,4 @@ int cleanup(int flags)
             return 1;
 
     return 1;
-}
-
-LocalResources get_initial_resources(void)
-{
-    LocalResources res = { 0 };
-    for (int i = 0; i < node_map->cap; ++i) {
-        bool exists_item = node_map->items[i].data != NULL &&
-                            !node_map->items[i].deleted;
-        if (exists_item) {
-            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
-            res.cpu += node->resources.cpu;
-            res.mem += node->resources.mem;
-            res.gpu += node->resources.gpu;
-
-            res.current_cpu += node->resources.current_cpu;
-            res.current_mem += node->resources.current_mem;
-            res.current_gpu += node->resources.current_gpu;
-        }
-    }
-
-    return res;
 }
