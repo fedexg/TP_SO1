@@ -61,6 +61,7 @@ int cleanup(int flags);
 
 int main(int argc, char **argv)
 {
+    // TODO: initialize global data structures
     signal(SIGPIPE, SIG_IGN);
 
     if (argc < 2)
@@ -551,6 +552,11 @@ int close_sockets(void)
     }
 
     if (close(listen_public_sock) < 0) {
+        error("Error intentando cerrar el socket para los agentes");
+        return FAIL;
+    }
+
+    if (close(udp_broadcast_sock) < 0) {
         error("Error intentando cerrar el socket para los agentes");
         return FAIL;
     }

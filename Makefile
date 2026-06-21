@@ -1,5 +1,5 @@
 CC=gcc
-C_SRC=agente.c utils.c types.c resources.c erl.c agents.c \
+C_SRC=main.c utils.c types.c resources.c erl.c agents.c \
 	  ds/hashmap.c ds/queue.c ds/list.c
 C_OBJ=$(C_SRC:.c=.o)
 C_OUT=agente
@@ -8,7 +8,7 @@ CFLAGS=-Wall -Werror -pthread
 default: $(C_OBJ)
 	$(CC) -o $(C_OUT) $(CFLAGS) $(C_OBJ)
 
-agente.o: agente.c
+main.o: main.c
 	$(CC) -c $^ $(CFLAGS)
 
 ds/hashmap.o: ds/hashmap.c
