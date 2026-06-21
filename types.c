@@ -4,13 +4,8 @@
 #include "utils.h"
 #include "types.h"
 
-// Start of node_map void* handling logic
-
-
-
-// End of node_map void* handling logic
-
-NodeMapCell *node_cell_copy(NodeMapCell* nmc){
+NodeMapCell *node_cell_copy(NodeMapCell *nmc)
+{
     int port = nmc->port;
     int socket_fd = nmc->socket_fd;
     LocalResources resources = nmc->resources;
@@ -25,17 +20,29 @@ NodeMapCell *node_cell_copy(NodeMapCell* nmc){
     return cloned;
 }
 
-int node_cell_cmp(NodeMapCell* nmc1, NodeMapCell* nmc2){
-    return !streq(nmc1->ip,nmc2->ip);
+int node_cell_cmp(NodeMapCell *nmc1, NodeMapCell *nmc2)
+{
+    return strcmp(nmc1->ip, nmc2->ip);
 }
 
-void node_cell_free(NodeMapCell* nmc){
+void node_cell_free(NodeMapCell *nmc)
+{
     free(nmc->ip);
     free(nmc);
 }
 
+unsigned int node_cell_hash(NodeMapCell *nmp)
+{
+    unsigned int h = 0;
+    for (int i = 0; nmp->ip[i] != '\0'; ++i)
+        h = 31*h + nmp->ip[i];
+
+    return h;
+}
+
 // Start of job_map void* handling logic
-JobMapCell *job_cell_copy(JobMapCell* jmc){
+JobMapCell *job_cell_copy(JobMapCell* jmc)
+{
     long long job_id = jmc->job_id;
     int num_remotely_allocated = jmc->num_remotely_allocated;
     RemoteAllocation *remote_allocations = jmc->remote_allocations;
@@ -48,18 +55,24 @@ JobMapCell *job_cell_copy(JobMapCell* jmc){
     memcpy(cloned->remote_allocations, remote_allocations, num_remotely_allocated);
     return cloned;
 }
-int job_cell_cmp(JobMapCell* jmc1, JobMapCell* jmc2){
+
+int job_cell_cmp(JobMapCell* jmc1, JobMapCell* jmc2)
+{
     return jmc1->job_id - jmc2->job_id;
 
 }
-void job_cell_free(JobMapCell* jmc){
+
+void job_cell_free(JobMapCell* jmc)
+{
     free(jmc->remote_allocations);
     free(jmc);
 }
 
-// End of job_map void* handling logic
+unsigned int job_cell_hash(JobMapCell *jmc)
+{
+    return 8191*jmc->job_id;
+}
 
-// Start of job_queue void* handling logic
 JobQueueData *job_copy(JobQueueData *j)
 {
     int erlang_fd = j->request.erlang_fd;
@@ -72,8 +85,9 @@ JobQueueData *job_copy(JobQueueData *j)
     cloned->request.erlang_fd = erlang_fd;
     cloned->request.job_id = job_id;
     cloned->request.num_allocations = num_allocations;
-    cloned->request.node_allocations = calloc(num_allocations,sizeof(NodeAllocationInfo));
-    memcpy(cloned->request.node_allocations,node_allocations,num_allocations);
+    cloned->request.node_allocations = calloc(num_allocations, sizeof(NodeAllocationInfo));
+    memcpy(cloned->request.node_allocations, node_allocations, num_allocations);
+
     return cloned;
 }
 
@@ -82,8 +96,6 @@ void job_free(JobQueueData *j)
     free(j->request.node_allocations);
     free(j);
 }
-
-// End of JobQueueData void* handling logic
 
 int *int_copy(int *x)
 {

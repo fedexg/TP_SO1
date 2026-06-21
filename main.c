@@ -68,11 +68,8 @@ int main(int argc, char **argv)
     node_resources.current_gpu = node_resources.gpu;
     node_resources.current_mem = node_resources.mem;
 
-    // TODO:
-    // Implement hash for node_map
-    // Implement hash for job_map
-    node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy, (CmpFunc)node_cell_cmp, (FreeFunc)node_cell_free, HashFunc hash); 
-    job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy, (CmpFunc)job_cell_cmp, (FreeFunc)job_cell_free, HashFunc hash);
+    node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy, (CmpFunc)node_cell_cmp, (FreeFunc)node_cell_free, node_cell_hash); 
+    job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy, (CmpFunc)job_cell_cmp, (FreeFunc)job_cell_free, job_cell_hash);
 
     job_queue = queue_make();
 
@@ -533,9 +530,9 @@ void handle_udp_packet(int udp_fd)
     // It's the first time the node was announced
     if (node == NULL){
         node = malloc(sizeof(NodeMapCell));
-        node->ip = addr.sin_addr.s_addr; // TODO: convertirlo a string
+        node->ip = inet_ntoa(addr.sin_addr.s_addr);
         node->port = atoi(fields[1]);
-        node->socket_fd = // TODO: que se hace aca?
+        node->socket_fd = -1;
     }
 
 
