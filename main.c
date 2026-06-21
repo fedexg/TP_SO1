@@ -541,7 +541,7 @@ void handle_udp_packet(int udp_fd)
     // It's the first time the node was announced
     if (node == NULL){
         node = malloc(sizeof(NodeMapCell));
-        node->ip = inet_ntoa(addr.sin_addr.s_addr);
+        node->ip = inet_ntoa(addr.sin_addr);
         node->port = atoi(fields[1]);
         node->socket_fd = -1;
     }
