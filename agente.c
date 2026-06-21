@@ -1,6 +1,3 @@
-// TODO LIST
-// - deadlock prevention (timeouts, timerfd)
-
 #include <assert.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -111,7 +108,6 @@ typedef struct _Request {
 } Request;
 
 // Represents a single node inside an Erlang request
-// TODO: find a way to figure out port
 typedef struct _NodeAllocationInfo {
     char *ip;
     int port;
@@ -1007,7 +1003,14 @@ ErlangRequest parse_erlang_request(char **request_fields, int request_fields_siz
     for (int i = 2; i < request_fields_size; ++i) {
         char **node_information = split(request_fields[i], ":", NULL);
         nodes[nodes_len].ip = strdup(node_information[0] + 1);
-        nodes[nodes_len].port = agent_port;
+
+        // We use this to get the port of the request
+        NodeMapCell *cached_node = hashmap_search(node_map, &nodes[nodes_len].ip);
+        if (cached_node != NULL)
+            nodes[nodes_len].port = cached_node->port;
+        else
+            nodes[nodes_len].port = DEFAULT_PORT;
+
         nodes[nodes_len].agent_fd = -1;
 
         if (streq(node_information[1], "cpu")) {
