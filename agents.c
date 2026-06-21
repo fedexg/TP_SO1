@@ -130,7 +130,7 @@ void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
                     RemoteAllocation *remote = &job->remote_allocations[j];
 
                     // If it's a non-dead node, restore its resources
-                    if (!streq(remote->ip, dead_node->ip)) {
+                    if (!streq(remote->ip, node->ip)) {
                         NodeMapCell *alive_node = hashmap_search(node_map, &remote->ip);
                         if (alive_node != NULL) {
                             alive_node->resources.current_cpu += remote->resources.current_cpu;
