@@ -253,9 +253,13 @@ void *checker_thread_handler(void *arg)
         // If agent must use job_queue, give it time to do so
         sleep(CHECKER_QUEUE_USE_TIME);
         for (QueueNode *p = job_queue; p != NULL; p = p->next) {
+            QueueNode *next = p->next;
             JobQueueData *job = (JobQueueData *)p->data;
             if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE)
                 delete_from_job_queue(job);
+
+            // We do this to prevent a potential use after free
+            p = next;
         }
     }
 
@@ -264,7 +268,28 @@ void *checker_thread_handler(void *arg)
 
 void delete_from_job_queue(JobQueueData *job)
 {
-    // TODO
+    if (job_queue == NULL || job == NULL)
+        return;
+
+    QueueNode *prev = NULL;
+    QueueNode *curr = job_queue;
+
+    while (curr != NULL) {
+        // Check if this node contains the target job data
+        if (curr->data == job) {
+            if (prev == NULL) // The target job is at the head of the queue
+                job_queue = curr->next;
+            else // The target job is in the middle or at the end
+                prev->next = curr->next;
+
+            job_free(job);
+            free(curr);
+            return;
+        }
+
+        prev = curr;
+        curr = curr->next;
+    }
 }
 
 JobQueueData *job_copy(JobQueueData *j)
@@ -616,7 +641,6 @@ void *epoll_handler(void *arg)
             } else {
                 int client_fd = events[i].data.fd;
 
-                // TODO: resolve possible deadlocks
                 if (client_fd == connect_public_sock)
                     handle_c_agent(client_fd);
                 else if (client_fd == connect_erlang_sock)
