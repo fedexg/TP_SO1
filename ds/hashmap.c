@@ -26,6 +26,7 @@ Hashmap hashmap_make(unsigned int cap, CopyFunc copy, CmpFunc cmp,
         hm->items[i].deleted = 0;
     }
 
+    pthread_mutex_init(&hm->mutex, NULL);
     return hm;
 }
 
@@ -35,12 +36,14 @@ void hashmap_free(Hashmap hm)
         if (hm->items[i].data != NULL && !hm->items[i].deleted)
             hm->free(hm->items[i].data);
 
+    pthread_mutex_destroy(&hm->mutex);
     free(hm->items);
     free(hm);
 }
 
 void hashmap_put(Hashmap hm, void *data)
 {
+    pthread_mutex_lock(&hm->mutex);
     int idx = find_index(hm, data);
 
     if (idx != -1) {
@@ -69,6 +72,7 @@ void hashmap_put(Hashmap hm, void *data)
     float balance_factor = (float)hm->num_items/hm->cap;
     if (balance_factor >= 0.75f)
         hashmap_resize(hm);
+    pthread_mutex_unlock(&hm->mutex);
 }
 
 void *hashmap_search(Hashmap hm, void *data)
@@ -79,6 +83,7 @@ void *hashmap_search(Hashmap hm, void *data)
 
 void hashmap_delete(Hashmap hm, void *data)
 {
+    pthread_mutex_lock(&hm->mutex);
     int idx = find_index(hm, data);
 
     if (idx != -1) {
@@ -87,6 +92,7 @@ void hashmap_delete(Hashmap hm, void *data)
         hm->items[idx].deleted = 1;
         --hm->num_items;
     }
+    pthread_mutex_unlock(&hm->mutex);
 }
 
 int find_index(Hashmap hm, void *data)

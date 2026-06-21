@@ -1,6 +1,8 @@
 #ifndef __HASHMAP_H__
 #define __HASHMAP_H__
 
+#include <pthread.h>
+
 typedef void *(*CopyFunc)(void *data);
 typedef int (*CmpFunc)(void *data1, void *data2);
 typedef void (*FreeFunc)(void *data);
@@ -19,6 +21,8 @@ struct _Hashmap {
     CmpFunc cmp;
     FreeFunc free;
     HashFunc hash;
+
+    pthread_mutex_t mutex;
 };
 
 typedef struct _Hashmap *Hashmap;

@@ -122,6 +122,8 @@ int main(int argc, char **argv)
     if (close_sockets() < 0)
         return 1;
 
+    pthread_cond_destroy(&protection.nonempty_queue_cond);
+    pthread_mutex_destroy(&protection.mutex);
     return 0;
 }
 
