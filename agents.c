@@ -63,7 +63,7 @@ void process_request(Hashmap node_map, Hashmap job_map,
             if (cell == NULL)
                 cell = calloc(1, sizeof(JobMapCell));
 
-            increase_resources(&(cell->granted_resources),req.res_kind, req.amount);
+            increase_resources(&(cell->granted_resources), req.res_kind, req.amount);
             hashmap_put(job_map, &cell);
             give_resources(node_resources, req.res_kind, req.amount);
             sprintf(response_to_agent, "GRANTED %lld", req.job_id);
@@ -97,7 +97,8 @@ void process_request(Hashmap node_map, Hashmap job_map,
         while (!queue_empty(job_queue)) {
             ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
             job_queue = dequeue(job_queue, (QueueFreeFunc)job_free);
-            handle_job_request(node_map, job_queue, erl, protection, epoll_fd);
+            handle_job_request(node_map, job_map, node_resources, job_queue, erl,
+                               protection, epoll_fd);
         }
 
         break;

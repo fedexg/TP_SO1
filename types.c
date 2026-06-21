@@ -40,8 +40,7 @@ unsigned int node_cell_hash(NodeMapCell *nmp)
     return h;
 }
 
-// Start of job_map void* handling logic
-JobMapCell *job_cell_copy(JobMapCell* jmc)
+JobMapCell *job_cell_copy(JobMapCell *jmc)
 {
     long long job_id = jmc->job_id;
     int num_remotely_allocated = jmc->num_remotely_allocated;
@@ -51,16 +50,15 @@ JobMapCell *job_cell_copy(JobMapCell* jmc)
     JobMapCell* cloned = malloc(sizeof(JobMapCell));
     cloned->job_id = job_id;
     cloned->num_remotely_allocated = num_remotely_allocated;
-    cloned->remote_allocations = calloc(num_remotely_allocated,sizeof(RemoteAllocation));
+    cloned->remote_allocations = calloc(num_remotely_allocated, sizeof(RemoteAllocation));
     memcpy(cloned->remote_allocations, remote_allocations, num_remotely_allocated);
     cloned->granted_resources = granted_resources;
     return cloned;
 }
 
-int job_cell_cmp(JobMapCell* jmc1, JobMapCell* jmc2)
+int job_cell_cmp(JobMapCell *jmc1, JobMapCell *jmc2)
 {
     return jmc1->job_id - jmc2->job_id;
-
 }
 
 void job_cell_free(JobMapCell* jmc)

@@ -43,7 +43,8 @@ void handle_erlang_client(Hashmap node_map, Hashmap job_map,
         ErlangRequest erl = parse_erlang_request(node_map, request_fields, length, erlang_fd);
 
         if (streq(request_fields[0], "JOB_REQUEST"))
-            handle_job_request(node_map, job_queue, erl, protection, epoll_fd);
+            handle_job_request(node_map, job_map, node_resources, job_queue, erl,
+                               protection, epoll_fd);
         else if (streq(request_fields[0], "JOB_RELEASE"))
             handle_job_release(node_map, job_map, node_resources, erl, epoll_fd);
         else if (streq(request_fields[0], "JOB_STATUS"))
@@ -60,7 +61,9 @@ void handle_erlang_client(Hashmap node_map, Hashmap job_map,
 }
 
 // Handles an incoming job request from the erlang client
-void handle_job_request(Hashmap node_map, Queue job_queue, ErlangRequest erl,
+void handle_job_request(Hashmap node_map, Hashmap job_map,
+                        LocalResources *node_resources,
+                        Queue job_queue, ErlangRequest erl,
                         MutexCond protection,
                         int epoll_fd)
 {
@@ -92,8 +95,14 @@ void handle_job_request(Hashmap node_map, Queue job_queue, ErlangRequest erl,
     }
 
     // Ask agents for what we need
+    RemoteAllocation *remote_allocs = calloc(erl.num_allocations, sizeof(RemoteAllocation));
     int num_granted = 0;
     List agent_fds = list_make();
+
+    char my_ip[64];
+    get_local_ip(my_ip, 64);
+    LocalResources local = { 0 };
+
     for (int i = 0; i < erl.num_allocations; ++i) {
         NodeAllocationInfo alloc = erl.node_allocations[i];
         int agent_fd = alloc.agent_fd;
@@ -116,16 +125,34 @@ void handle_job_request(Hashmap node_map, Queue job_queue, ErlangRequest erl,
         if (alloc.res_kind == RES_KIND_GPU)
             strcpy(resource, "gpu");
 
-        // Send RESERVE message based on what we found
-        sprintf(msg, "RESERVE %lld %s %d", job_id, resource, alloc.amount);
-        send(agent_fd, msg, strlen(msg), 0);
+        // Let's try not to send a message to ourselves...
+        if (streq(alloc.ip, my_ip)) {
+            if (exists_resource(node_resources, alloc.res_kind, alloc.amount)) {
+                give_resources(node_resources, alloc.res_kind, alloc.amount);
+                increase_resources(&local, alloc.res_kind, alloc.amount);
+                ++num_granted;
+            }
+        } else {
+            // Send RESERVE message based on what we found
+            sprintf(msg, "RESERVE %lld %s %d", job_id, resource, alloc.amount);
+            send(agent_fd, msg, strlen(msg), 0);
 
-        // Count how many granteds we received
-        char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
-        recv(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1, 0);
-        if (strncmp(recv_buffer, "GRANTED", 7) == 0) {
-            ++num_granted;
-            agent_fds = list_append(agent_fds, &agent_fd, (ListCpyFunc)int_copy);
+            // Count how many GRANTEDs we received
+            char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
+            recv(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1, 0);
+            if (strncmp(recv_buffer, "GRANTED", 7) == 0) {
+                strcpy(remote_allocs[num_granted].ip, alloc.ip);
+                remote_allocs[num_granted].port = alloc.port;
+                if (alloc.res_kind == RES_KIND_CPU)
+                    remote_allocs[num_granted].resources.current_cpu += alloc.amount;
+                if (alloc.res_kind == RES_KIND_MEM)
+                    remote_allocs[num_granted].resources.current_gpu += alloc.amount;
+                if (alloc.res_kind == RES_KIND_GPU)
+                    remote_allocs[num_granted].resources.current_mem += alloc.amount;
+
+                ++num_granted;
+                agent_fds = list_append(agent_fds, &agent_fd, (ListCpyFunc)int_copy);
+            }
         }
     }
 
@@ -137,18 +164,31 @@ void handle_job_request(Hashmap node_map, Queue job_queue, ErlangRequest erl,
         for (ListNode *p = agent_fds; p != NULL; p = p->next) {
             for (int i = 0; i < erl.num_allocations; ++i) {
                 NodeAllocationInfo alloc = erl.node_allocations[i];
-                if (*(int *)p->data == alloc.agent_fd) {
-                    char buffer[BUFFER_MAX_SIZE]  = { 0 };
-                    sprintf(buffer, "RELEASE %lld", job_id);
-                    send(alloc.agent_fd, buffer, strlen(buffer), 0);
+                if (streq(alloc.ip, my_ip))
+                    increase_resources(node_resources, alloc.res_kind, alloc.amount);
+                else {
+                    if (*(int *)p->data == alloc.agent_fd) {
+                        char buffer[BUFFER_MAX_SIZE]  = { 0 };
+                        sprintf(buffer, "RELEASE %lld", job_id);
+                        send(alloc.agent_fd, buffer, strlen(buffer), 0);
+                    }
                 }
             }
         }
 
+        free(remote_allocs);
         enqueue(job_queue, &erl, (QueueCpyFunc)job_copy);
         pthread_cond_signal(&protection.nonempty_queue_cond);
         return;
     }
+
+    JobMapCell *cell = calloc(1, sizeof(JobMapCell));
+    cell->job_id = job_id;
+    cell->num_remotely_allocated = erl.num_allocations;
+    cell->remote_allocations = remote_allocs;
+    cell->granted_resources = local;
+
+    hashmap_put(job_map, cell);
 
     memset(msg, 0, BUFFER_MAX_SIZE - 1);
     sprintf(msg, "JOB_GRANTED %lld", job_id);

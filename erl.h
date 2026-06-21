@@ -10,7 +10,9 @@ void handle_erlang_client(Hashmap node_map, Hashmap job_map,
                           LocalResources *node_resources,
                           MutexCond protection,
                           int erlang_fd, int epoll_fd);
-void handle_job_request(Hashmap node_map, Queue job_queue, ErlangRequest erl,
+void handle_job_request(Hashmap node_map, Hashmap job_map,
+                        LocalResources *node_resources,
+                        Queue job_queue, ErlangRequest erl,
                         MutexCond protection,
                         int epoll_fd);
 void handle_job_release(Hashmap node_map, Hashmap job_map,

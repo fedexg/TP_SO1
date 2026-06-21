@@ -132,7 +132,7 @@ void *worker_thread_handler(void *arg)
     while (true) {
         if (!queue_empty(job_queue)) {
             ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
-            handle_job_request(node_map, job_queue, erl, protection, epoll_fd);
+            handle_job_request(node_map, job_map, &node_resources, job_queue, erl, protection, epoll_fd);
             job_queue = dequeue(job_queue, (QueueFreeFunc)job_queue);
         }
     }
@@ -502,21 +502,6 @@ void check_agent_expiration_time(void)
             NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
             double diff = difftime(now, node->time_when_called);
             if (diff >= 15.0) {
-                // TODO: check if there are resources to free
-                // Si un nodo no se comunica en 15 segundos es que sufrio una desconexion
-                // del cluster, en cuyo caso handle_unexpected_disconnection ya hace todo lo necesario,
-                // O puede ocurrir que un nodo no se comunique por 15 segundos por algo que no sea una desconexion
-                // inesperada? En cuyo caso habria que repetir casi todo el codigo de handle_unexpected_disconnection
-                //
-                // Encontrar el nodo cagado
-                // Recorrer los jobs
-                // Mandar release a los que lo requieren
-                //
-                //
-                // IDEA: nigger
-                // Recorrer el hm de jobs
-                //   Si encontramos un job en el que participa el nodo cagado
-                //
                 release_affected_jobs(node, node_map, job_map, &node_resources);
                 hashmap_delete(node_map, node);
             }
