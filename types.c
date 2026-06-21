@@ -4,6 +4,64 @@
 #include "utils.h"
 #include "types.h"
 
+// Start of node_map void* handling logic
+
+
+
+// End of node_map void* handling logic
+
+NodeMapCell *node_cell_copy(NodeMapCell* nmc){
+    int port = nmc->port;
+    int socket_fd = nmc->socket_fd;
+    LocalResources resources = nmc->resources;
+    time_t time_when_called = nmc->time_when_called;
+
+    NodeMapCell* cloned = malloc(sizeof(NodeMapCell));
+    cloned->ip = strdup(nmc->ip);
+    cloned->port = port;
+    cloned->socket_fd = socket_fd;
+    cloned->resources = resources;
+    cloned->time_when_called = time_when_called;
+    return cloned;
+}
+
+int node_cell_cmp(NodeMapCell* nmc1, NodeMapCell* nmc2){
+    return !streq(nmc1->ip,nmc2->ip);
+}
+
+void node_cell_free(NodeMapCell* nmc){
+    free(nmc->ip);
+    free(nmc);
+}
+
+// Start of job_map void* handling logic
+// TODO: Modify job_cell_copy, job_cell_cmp and job_cell_free to comply with ErlangRequest
+JobMapCell *job_cell_copy(JobMapCell* jmc){
+    long long job_id = jmc->job_id;
+    int num_remotely_allocated = jmc->num_remotely_allocated;
+    RemoteAllocation *remote_allocations = jmc->remote_allocations;
+    LocalResources granted_resources = jmc->granted_resources;
+
+    JobMapCell* cloned = malloc(sizeof(JobMapCell));
+    cloned->job_id = job_id;
+    cloned->num_remotely_allocated = num_remotely_allocated;
+    cloned->remote_allocations = calloc(num_remotely_allocated,sizeof(RemoteAllocation));
+    memcpy(cloned->remote_allocations, remote_allocations, num_remotely_allocated);
+    return cloned;
+}
+int job_cell_cmp(JobMapCell* jmc1, JobMapCell* jmc2){
+    return jmc1->job_id - jmc2->job_id;
+
+}
+void job_cell_free(JobMapCell* jmc){
+    free(jmc->remote_allocations);
+    free(jmc);
+}
+
+// End of job_map void* handling logic
+
+// Start of job_queue void* handling logic
+
 JobQueueData *job_copy(JobQueueData *j)
 {
     long long job_id = j->job_cell.job_id;
@@ -25,6 +83,8 @@ void job_free(JobQueueData *j)
     free(j->job_cell.remote_allocations);
     free(j);
 }
+
+// End of JobQueueData void* handling logic
 
 int *int_copy(int *x)
 {

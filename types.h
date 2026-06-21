@@ -71,6 +71,12 @@ typedef struct _ErlangRequest {
     int num_allocations;
 } ErlangRequest;
 
+NodeMapCell *node_cell_copy(NodeMapCell* nmp);
+int node_cell_cmp(NodeMapCell* nmp1, NodeMapCell* nmp2);
+void node_cell_free(NodeMapCell* nmp);
+JobMapCell *job_cell_copy(JobMapCell* jmc);
+int job_cell_cmp(JobMapCell* jmc1, JobMapCell* jmc2);
+void job_cell_free(JobMapCell* jmc);
 JobQueueData *job_copy(JobQueueData *j);
 void job_free(JobQueueData *j);
 int *int_copy(int *x);

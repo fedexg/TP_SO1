@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "ds/hashmap.h"
+#include <stdbool.h>
 
 bool exists_resource(LocalResources *res, ResourceKind kind, int amount);
 void give_resources(LocalResources *res, ResourceKind kind, int amount);

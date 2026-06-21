@@ -61,7 +61,23 @@ int cleanup(int flags);
 
 int main(int argc, char **argv)
 {
-    // TODO: initialize global data structures
+    node_resources.cpu = MAX_CPU;
+    node_resources.gpu = MAX_GPU;
+    node_resources.mem = MAX_MEM;
+    node_resources.current_cpu = node_resources.cpu;
+    node_resources.current_gpu = node_resources.gpu;
+    node_resources.current_mem = node_resources.mem;
+
+    // TODO:
+    // Implement hash for node_map
+    // Implement copy, cmp, free and hash for job_map
+    node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy, (CmpFunc)node_cell_cmp, (FreeFunc)node_cell_free, HashFunc hash); 
+    job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy, (CmpFunc)job_cell_cmp, (FreeFunc)job_cell_free, HashFunc hash);
+
+    job_queue = queue_make();
+
+    timed_out_jobs = list_make();
+
     signal(SIGPIPE, SIG_IGN);
 
     if (argc < 2)
@@ -473,6 +489,10 @@ void check_agent_expiration_time(void)
             double diff = difftime(now, node->time_when_called);
             if (diff >= 15.0) {
                 // TODO: check if there are resources to free
+                // Si un nodo no se comunica en 15 segundos es que sufrio una desconexion
+                // del cluster, en cuyo caso handle_unexpected_disconnection ya hace todo lo necesario,
+                // O puede ocurrir que un nodo no se comunique por 15 segundos por algo que no sea una desconexion
+                // inesperada? En cuyo caso habria que repetir casi todo el codigo de handle_unexpected_disconnection
                 hashmap_delete(node_map, node);
             }
         }
@@ -510,9 +530,14 @@ void handle_udp_packet(int udp_fd)
     char *ip = inet_ntoa(addr.sin_addr);
     NodeMapCell *node = hashmap_search(node_map, &ip);
 
-    if (node == NULL)
-        // TODO: node does not exist.
-        return;
+    // It's the first time the node was announced
+    if (node == NULL){
+        node = malloc(sizeof(NodeMapCell));
+        node->ip = addr.sin_addr.s_addr; // TODO: convertirlo a string
+        node->port = atoi(fields[1]);
+        node->socket_fd = // TODO: que se hace aca?
+    }
+
 
     // fields looks like
     // [ANNOUNCE <port> cpu:<x> mem:<y> gpu:<z>]

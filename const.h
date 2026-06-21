@@ -22,6 +22,8 @@
 #define CHECKER_QUEUE_USE_TIME          5
 #define CHECKER_QUEUE_TIME_UNTIL_DELETE 15.0
 
+#define HASHMAP_INITIAL_CAP 128
+
 #define streq(a, b) (strcmp((a), (b)) == 0)
 
 typedef enum {
