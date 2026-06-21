@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 
 #include "const.h"
 #include "utils.h"
@@ -74,4 +75,18 @@ char **split(char *text, char *delimiter, int *len)
     if (len)
         *len = i - 1;
     return result;
+}
+
+// Adds the corresponding file descriptor to the epoll instance
+int add_descriptor(int epoll_fd, int fd)
+{
+    struct epoll_event ev;
+    ev.events = EPOLLIN;
+    ev.data.fd = fd;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
+        error("Error intentando añadir el socket a la instancia de epoll");
+        return FAIL;
+    }
+
+    return OK;
 }
