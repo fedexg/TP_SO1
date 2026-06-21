@@ -35,7 +35,6 @@ void node_cell_free(NodeMapCell* nmc){
 }
 
 // Start of job_map void* handling logic
-// TODO: Modify job_cell_copy, job_cell_cmp and job_cell_free to comply with ErlangRequest
 JobMapCell *job_cell_copy(JobMapCell* jmc){
     long long job_id = jmc->job_id;
     int num_remotely_allocated = jmc->num_remotely_allocated;
@@ -61,7 +60,7 @@ void job_cell_free(JobMapCell* jmc){
 // End of job_map void* handling logic
 
 // Start of job_queue void* handling logic
-
+// TODO: Modify job_cell_copy, job_cell_cmp and job_cell_free to comply with ErlangRequest
 JobQueueData *job_copy(JobQueueData *j)
 {
     long long job_id = j->job_cell.job_id;
