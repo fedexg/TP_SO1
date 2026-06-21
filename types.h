@@ -1,6 +1,7 @@
 #ifndef TYPES_H
 #define TYPES_H
 
+#include <time.h>
 #include "const.h"
 #include "ds/hashmap.h"
 

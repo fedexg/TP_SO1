@@ -22,6 +22,7 @@
 #include "utils.h"
 #include "const.h"
 #include "types.h"
+#include "resources.h"
 
 int listen_public_sock, listen_erlang_sock;
 int connect_public_sock, connect_erlang_sock;
@@ -55,9 +56,6 @@ void handle_c_agent(int c_agent_fd);
 void handle_unexpected_disconnection(int fd);
 Request parse_request(char **request_fields, int n_fields);
 void process_request(Request req, int fd);
-bool exists_resource(ResourceKind kind, int amount);
-void give_resources(ResourceKind kind, int amount);
-void increase_resources(ResourceKind kind, int amount);
 void handle_erlang_client(int erlang_client_fd);
 void handle_job_request(ErlangRequest erl);
 void handle_job_release(ErlangRequest erl);
@@ -565,11 +563,11 @@ void handle_unexpected_disconnection(int fd)
                 }
 
                 if (job->granted_resources.current_cpu > 0)
-                    give_resources(RES_KIND_CPU, job->granted_resources.current_cpu);
+                    give_resources(&node_resources, RES_KIND_CPU, job->granted_resources.current_cpu);
                 if (job->granted_resources.current_mem > 0)
-                    give_resources(RES_KIND_MEM, job->granted_resources.current_mem);
+                    give_resources(&node_resources, RES_KIND_MEM, job->granted_resources.current_mem);
                 if (job->granted_resources.current_gpu > 0)
-                    give_resources(RES_KIND_GPU, job->granted_resources.current_gpu);
+                    give_resources(&node_resources, RES_KIND_GPU, job->granted_resources.current_gpu);
 
                 // Delete job
                 long long delete_id = job->job_id;
@@ -589,37 +587,16 @@ void process_request(Request req, int fd)
     char response_to_agent[128] = {0};
     switch (req.kind) {
     case REQUEST_KIND_RESERVE:
-        if (exists_resource(req.res_kind, req.amount)) {
+        if (exists_resource(&node_resources, req.res_kind, req.amount)) {
             JobMapCell *cell = hashmap_search(job_map, &req.job_id);
 
             // We didn't find a cell with this job id. We create it.
             if (cell == NULL)
                 cell = calloc(1, sizeof(JobMapCell));
 
-            // 1001 {current_cpu 1, current_mem 0, current_gpu 0}
-            // RESERVE 1001 current_gpu 1 (r)
-            // cell = r
-            // Request {REQUEST_KIND_RESERVE, <job_id>, RES_KIND_GPU, 1};
-            // cell->granted_resources.current_gpu += 1
-            // hashmap_put(hm, cell)
-            // 1001 {current_cpu 1, current_mem 0, current_gpu 1}
-            switch (req.res_kind) {
-            case RES_KIND_CPU:
-                cell->granted_resources.current_cpu += req.amount;
-                break;
-            case RES_KIND_GPU:
-                cell->granted_resources.current_gpu += req.amount;
-                break;
-            case RES_KIND_MEM:
-                cell->granted_resources.current_mem += req.amount;
-                break;
-            default:
-                // lol
-                break;
-            }
-
+            increase_resources(&(cell->granted_resources),req.res_kind, req.amount);
             hashmap_put(job_map, &cell);
-            give_resources(req.res_kind, req.amount);
+            give_resources(&node_resources, req.res_kind, req.amount);
             sprintf(response_to_agent, "GRANTED %lld", req.job_id);
             send(fd, response_to_agent, 8, 0);
         } else {
@@ -630,7 +607,7 @@ void process_request(Request req, int fd)
         break;
 
     case REQUEST_KIND_RELEASE:
-        increase_resources(req.res_kind, req.amount);
+        increase_resources(&node_resources, req.res_kind, req.amount);
         JobMapCell *cell = hashmap_search(job_map, &req.job_id);
 
         // Cell not found, therefore no job with that id was found.
@@ -640,20 +617,7 @@ void process_request(Request req, int fd)
             return;
         }
 
-        switch (req.res_kind) {
-        case RES_KIND_CPU:
-            cell->granted_resources.current_cpu -= req.amount;
-            break;
-        case RES_KIND_GPU:
-            cell->granted_resources.current_gpu -= req.amount;
-            break;
-        case RES_KIND_MEM:
-            cell->granted_resources.current_mem -= req.amount;
-            break;
-        default:
-            break;
-        }
-
+        give_resources(&(cell->granted_resources), req.res_kind, req.amount);
         if (cell->granted_resources.current_cpu == 0 && cell->granted_resources.current_gpu == 0 &&
             cell->granted_resources.current_mem) {
             hashmap_delete(job_map, &req.job_id);
@@ -662,70 +626,12 @@ void process_request(Request req, int fd)
             hashmap_put(job_map, &cell);
 
         while (!queue_empty(job_queue)) {
+            // TODO: this doesn't type :/ 
             ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
             job_queue = dequeue(job_queue, (QueueFreeFunc)job_free);
             handle_job_request(erl);
         }
 
-        break;
-    default:
-        break;
-    }
-}
-
-// Returns true if there are enough resources requested in the local node
-bool exists_resource(ResourceKind kind, int amount)
-{
-    switch (kind) {
-    case RES_KIND_CPU:
-        if (node_resources.current_cpu >= amount)
-            return true;
-        break;
-    case RES_KIND_MEM:
-        if (node_resources.current_mem >= amount)
-            return true;
-        break;
-    case RES_KIND_GPU:
-        if (node_resources.current_gpu >= amount)
-            return true;
-        break;
-    default:
-        break;
-    }
-
-    return false;
-}
-
-// Decreases a node resource (which is specified by kind) by a given amount
-void give_resources(ResourceKind kind, int amount)
-{
-    switch (kind) {
-    case RES_KIND_CPU:
-        node_resources.current_cpu -= amount;
-        break;
-    case RES_KIND_MEM:
-        node_resources.current_mem -= amount;
-        break;
-    case RES_KIND_GPU:
-        node_resources.current_gpu -= amount;
-        break;
-    default:
-        break;
-    }
-}
-
-// Increases a node resource (which is specified by kind) by a given amount
-void increase_resources(ResourceKind kind, int amount)
-{
-    switch (kind) {
-    case RES_KIND_CPU:
-        node_resources.current_cpu += amount;
-        break;
-    case RES_KIND_MEM:
-        node_resources.current_mem += amount;
-        break;
-    case RES_KIND_GPU:
-        node_resources.current_gpu += amount;
         break;
     default:
         break;
@@ -873,9 +779,9 @@ void handle_job_release(ErlangRequest erl)
         return;
     }
 
-    increase_resources(RES_KIND_CPU, cell->granted_resources.current_cpu);
-    increase_resources(RES_KIND_GPU, cell->granted_resources.current_gpu);
-    increase_resources(RES_KIND_MEM, cell->granted_resources.current_mem);
+    increase_resources(&node_resources, RES_KIND_CPU, cell->granted_resources.current_cpu);
+    increase_resources(&node_resources, RES_KIND_GPU, cell->granted_resources.current_gpu);
+    increase_resources(&node_resources, RES_KIND_MEM, cell->granted_resources.current_mem);
 
     // Iterate over remotely allocated resources
     for (int i = 0; i < cell->num_remotely_allocated; i++) {
