@@ -1,4 +1,3 @@
-#include <assert.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -20,109 +19,9 @@
 #include "ds/hashmap.h"
 #include "ds/queue.h"
 #include "ds/list.h"
-
-#define OK           0
-#define FAIL         -1
-#define UDP_PORT     12529
-#define ERLANG_PORT  1337
-#define DEFAULT_PORT 8080
-
-#define EPOLL_MAX_EVENTS     10
-#define EPOLL_TIMEOUT        -1
-#define EPOLL_SHORT_TIMEOUT 500
-
-#define CLEAN_SOCKETS  0b1
-#define CLEAN_EPOLL   0b10
-
-#define MAX_CPU 8
-#define MAX_GPU 4
-#define MAX_MEM 16384
-#define BUFFER_MAX_SIZE 128
-
-#define CHECKER_QUEUE_USE_TIME          5
-#define CHECKER_QUEUE_TIME_UNTIL_DELETE 15.0
-
-#define streq(a, b) (strcmp((a), (b)) == 0)
-
-typedef enum {
-    REQUEST_KIND_RESERVE = 0,
-    REQUEST_KIND_RELEASE
-} RequestKind;
-
-typedef enum {
-    RES_KIND_CPU = 0,
-    RES_KIND_MEM,
-    RES_KIND_GPU
-} ResourceKind;
-
-// SOCK_STREAM -> TCP
-// SOCK_DGRAM ->  UDP
-
-// Local node resources
-typedef struct _LocalResources {
-    int current_cpu;
-    int current_mem;
-    int current_gpu;
-
-    int cpu;
-    int mem;
-    int gpu;
-} LocalResources;
-
-// Represents the allocated resources in a remote node
-typedef struct _RemoteAllocation {
-    char ip[16];
-    int port;
-    LocalResources resources;
-} RemoteAllocation;
-
-// Cell of node_map
-typedef struct _NodeMapCell {
-    char *ip;
-    int port;
-    int socket_fd;
-    LocalResources resources;
-    time_t time_when_called;
-} NodeMapCell;
-
-// Cell of job_map 
-typedef struct _JobMapCell {
-    long long job_id;
-    int num_remotely_allocated;
-    RemoteAllocation *remote_allocations; // array of all the remotely allocated resources
-    LocalResources granted_resources;
-} JobMapCell;
-
-typedef struct JobQueueData {
-    JobMapCell job_cell;
-    time_t time_when_alloc;
-    char **request_fields;
-} JobQueueData;
-
-// Represents C agent request
-typedef struct _Request {
-    long long job_id;
-    RequestKind kind;
-    ResourceKind res_kind;
-    int amount;
-} Request;
-
-// Represents a single node inside an Erlang request
-typedef struct _NodeAllocationInfo {
-    char *ip;
-    int port;
-    int agent_fd;  // Stores the connection to the C agent
-    ResourceKind res_kind;
-    int amount;
-} NodeAllocationInfo;
-
-// Represents an Erlang request
-typedef struct _ErlangRequest {
-    int erlang_fd;  // Stores the connection to the Erlang planner
-    long long job_id;
-    NodeAllocationInfo *node_allocations;
-    int num_allocations;
-} ErlangRequest;
+#include "utils.h"
+#include "const.h"
+#include "types.h"
 
 int listen_public_sock, listen_erlang_sock;
 int connect_public_sock, connect_erlang_sock;
@@ -138,16 +37,9 @@ Hashmap node_map, job_map;
 Queue job_queue;
 List timed_out_jobs;
 
-// Job queue information
-JobQueueData *job_copy(JobQueueData *j);
-void job_free(JobQueueData *j);
-int *int_copy(int *x);
-
-// General functions
 void *worker_thread_handler(void *arg);
 void *checker_thread_handler(void *arg);
 void delete_from_job_queue(JobQueueData *job);
-void error(const char *msg);
 int init_sockets(void);
 int init_agents_socket(void);
 int init_listen_erlang_socket(void);
@@ -156,22 +48,17 @@ int init_timer(void);
 int init_epoll(void);
 int startup(void);
 void send_udp_announce(void);
-int get_local_ip(char *ip_buffer, int buffer_size);
 int add_descriptors(void);
 int add_descriptor(int fd);
 void *epoll_handler(void *arg);
-int set_socket_nonblocking(int sock);
 void handle_c_agent(int c_agent_fd);
 void handle_unexpected_disconnection(int fd);
-char **split(char *text, char *delimiter, int *len);
 Request parse_request(char **request_fields, int n_fields);
 void process_request(Request req, int fd);
 bool exists_resource(ResourceKind kind, int amount);
 void give_resources(ResourceKind kind, int amount);
 void increase_resources(ResourceKind kind, int amount);
-Request *request_dup(Request *req);
 void handle_erlang_client(int erlang_client_fd);
-ErlangRequest parse_erlang_request(char **request_fields, int request_fields_size, int fd);
 void handle_job_request(ErlangRequest erl);
 void handle_job_release(ErlangRequest erl);
 void handle_job_status(ErlangRequest erl);
@@ -290,40 +177,6 @@ void delete_from_job_queue(JobQueueData *job)
         prev = curr;
         curr = curr->next;
     }
-}
-
-JobQueueData *job_copy(JobQueueData *j)
-{
-    long long job_id = j->job_cell.job_id;
-    int num_remotely_allocated = j->job_cell.num_remotely_allocated;
-    RemoteAllocation *remote_allocations = j->job_cell.remote_allocations;
-    time_t time_when_alloc = j->time_when_alloc;
-
-    JobQueueData *cloned = malloc(sizeof(JobQueueData));
-    cloned->job_cell.job_id = job_id;
-    cloned->job_cell.num_remotely_allocated = num_remotely_allocated;
-    cloned->job_cell.remote_allocations = calloc(num_remotely_allocated, sizeof(RemoteAllocation));
-    memcpy(cloned->job_cell.remote_allocations, remote_allocations, num_remotely_allocated);
-    cloned->time_when_alloc = time_when_alloc;
-    return cloned;
-}
-
-void job_free(JobQueueData *j)
-{
-    free(j->job_cell.remote_allocations);
-    free(j);
-}
-
-int *int_copy(int *x)
-{
-    int *p = malloc(sizeof(int));
-    *p = *x;
-    return p;
-}
-
-void error(const char *msg)
-{
-    printf("%s: %s\n", msg, strerror(errno));
 }
 
 // Initialize c agent and erlang sockets
@@ -541,33 +394,6 @@ void send_udp_announce(void)
         error("Error intentando enviar ANNOUNCE");
 }
 
-int get_local_ip(char *ip_buffer, int buffer_size)
-{
-    struct ifaddrs *interfaces = NULL;
-    struct ifaddrs *p = NULL;
-    if (getifaddrs(&interfaces) < 0) {
-        error("Error intentando conseguir IPs");
-        return FAIL;
-    }
-
-    for (p = interfaces; p != NULL; p = p->ifa_next) {
-        if (p->ifa_addr == NULL)
-            continue;
-
-        // Search for IPv4
-        if (p->ifa_addr->sa_family == AF_INET)
-            // Check if up and not localhost
-            if ((p->ifa_flags & IFF_UP) && !(p->ifa_flags & IFF_LOOPBACK)) {
-                struct sockaddr_in *sa = (struct sockaddr_in *)p->ifa_addr;
-                if (inet_ntop(AF_INET, &(sa->sin_addr), ip_buffer, buffer_size) != NULL)
-                    break;
-            }
-    }
-
-    freeifaddrs(interfaces);
-    return OK;
-}
-
 int add_descriptors(void)
 {
     if (add_descriptor(listen_public_sock) < 0)
@@ -658,17 +484,6 @@ void *epoll_handler(void *arg)
     }
 }
 
-// https://stackoverflow.com/a/73879155
-int set_socket_nonblocking(int sock)
-{
-    int flags = fcntl(sock, F_GETFL, 0);
-    if (flags == -1)
-        return FAIL;
-
-    flags |= O_NONBLOCK;
-    return fcntl(sock, F_SETFL, flags);
-}
-
 void handle_c_agent(int fd)
 {
     char buffer[BUFFER_MAX_SIZE];
@@ -697,7 +512,7 @@ void handle_unexpected_disconnection(int fd)
 {
     NodeMapCell *dead_node = NULL;
 
-    // 1. Buscar qué nodo en el node_map coincide con el fd_muerto
+    // Find dead node file descriptor
     for (int i = 0; i < node_map->cap; ++i) {
         bool exists_item = node_map->items[i].data != NULL && !node_map->items[i].deleted;
         if (exists_item) {
@@ -712,14 +527,14 @@ void handle_unexpected_disconnection(int fd)
     if (dead_node == NULL)
         return;
 
-    // 2. Recorrer el job_map para limpiar los trabajos afectados
+    // Find affected jobs
     for (int i = 0; i < job_map->cap; ++i) {
         bool exists_job = job_map->items[i].data != NULL && !job_map->items[i].deleted;
         if (exists_job) {
             JobMapCell *job = (JobMapCell *)job_map->items[i].data;
             bool affected_job = false;
 
-            // Primero vemos si este Job usaba al nodo que se murió
+            // Check if job depended on dead node
             for (int j = 0; j < job->num_remotely_allocated; ++j) {
                 RemoteAllocation *remote = &job->remote_allocations[j];
                 if (streq(remote->ip, dead_node->ip) &&
@@ -731,17 +546,13 @@ void handle_unexpected_disconnection(int fd)
                 }
             }
 
-            // Si el Job dependía del nodo muerto, el Job fracasa.
-            // Debemos devolverle los recursos a todos los DEMÁS nodos que aportaron a este Job.
+            // Return resources to affected nodes
             if (affected_job) {
-                // A) DEVOLVER A OTROS NODOS REMOTOS
                 for (int j = 0; j < job->num_remotely_allocated; ++j) {
                     RemoteAllocation *remote = &job->remote_allocations[j];
 
-                    // Si es el nodo muerto, no le devolvemos nada.
-                    // Pero si es OTRO nodo remoto, le reintegramos sus recursos en el node_map
+                    // If it's a non-dead node, restore its resources
                     if (!streq(remote->ip, dead_node->ip)) {
-                        // Buscamos al nodo sobreviviente en el node_map para sumarle sus recursos
                         NodeMapCell *alive_node = hashmap_search(node_map, &remote->ip);
                         if (alive_node != NULL) {
                             alive_node->resources.current_cpu += remote->resources.current_cpu;
@@ -750,7 +561,6 @@ void handle_unexpected_disconnection(int fd)
                         }
                     }
 
-                    // Limpiamos la asignación remota del Job
                     memset(&remote->resources, 0, sizeof(LocalResources));
                 }
 
@@ -761,61 +571,16 @@ void handle_unexpected_disconnection(int fd)
                 if (job->granted_resources.current_gpu > 0)
                     give_resources(RES_KIND_GPU, job->granted_resources.current_gpu);
 
-                // C) BORRAR EL JOB AFECTADO
-                long long id_a_borrar = job->job_id;
+                // Delete job
+                long long delete_id = job->job_id;
                 free(job->remote_allocations);
-                hashmap_delete(job_map, &id_a_borrar);
+                hashmap_delete(job_map, &delete_id);
             }
         }
     }
 
-    // 3. Finalmente, borramos al nodo muerto del mapa de nodos y liberamos su memoria
     hashmap_delete(node_map, &dead_node->ip);
     free(dead_node);
-}
-
-// Given a string text and a delimiter, splits the string and stores in len the length of the char** it returns
-char **split(char *text, char *delimiter, int *len)
-{
-    int cap = 32;
-    char **result = malloc(sizeof(char *)*cap);
-
-    char *s2 = strdup(text);
-    char *tok = strtok(s2, delimiter);
-    int i = 0;
-    result[i++] = tok;
-    while (tok) {
-        tok = strtok(NULL, delimiter);
-        result[i++] = tok;
-    }
-
-    if (len)
-        *len = i - 1;
-    return result;
-}
-
-// Given request_fields, returns a request type datastructure.
-Request parse_request(char **request_fields, int n_fields)
-{
-    Request req;
-    char *req_kind = request_fields[0];
-    if (streq(req_kind, "RESERVE"))
-        req.kind = REQUEST_KIND_RESERVE;
-    else if (streq(req_kind, "RELEASE"))
-        req.kind = REQUEST_KIND_RELEASE;
-
-    req.job_id = atoll(request_fields[1]);
-    char *resource_name = request_fields[2];
-    if (streq(resource_name, "cpu"))
-        req.res_kind = RES_KIND_CPU;
-    else if (streq(resource_name, "mem"))
-        req.res_kind = RES_KIND_MEM;
-    else if (streq(resource_name, "gpu"))
-        req.res_kind = RES_KIND_GPU;
-
-    req.amount = atoi(request_fields[3]);
-
-    return req;
 }
 
 // Given a request and a file descriptor, processes the agent c request.
@@ -967,17 +732,6 @@ void increase_resources(ResourceKind kind, int amount)
     }
 }
 
-Request *request_dup(Request *req)
-{
-    Request *cloned = malloc(sizeof(Request));
-    cloned->job_id = req->job_id;
-    cloned->kind = req->kind;
-    cloned->res_kind = req->res_kind;
-    cloned->amount = req->amount;
-
-    return cloned;
-}
-
 // Handles an erlang client connection
 void handle_erlang_client(int fd)
 {
@@ -993,7 +747,7 @@ void handle_erlang_client(int fd)
     } else {
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
-        ErlangRequest erl = parse_erlang_request(request_fields, length, fd);
+        ErlangRequest erl = parse_erlang_request(node_map, request_fields, length, fd);
 
         if (streq(request_fields[0], "JOB_REQUEST"))
             handle_job_request(erl);
@@ -1011,57 +765,6 @@ void handle_erlang_client(int fd)
         free(request_fields);
     }
 }
-
-// Parses a request with the form JOB_REQUEST <job_id> [@ip:res:amount ... ]
-ErlangRequest parse_erlang_request(char **request_fields, int request_fields_size, int fd)
-{
-    ErlangRequest erl = { 0 };
-    erl.erlang_fd = fd;
-    erl.job_id = atoll(request_fields[1]);
-
-    int cap = 256;
-    NodeAllocationInfo *nodes = calloc(cap, sizeof(NodeAllocationInfo));
-    int nodes_len = 0;
-
-    // Read starting from the array of nodes
-    for (int i = 2; i < request_fields_size; ++i) {
-        char **node_information = split(request_fields[i], ":", NULL);
-        nodes[nodes_len].ip = strdup(node_information[0] + 1);
-
-        // We use this to get the port of the request
-        NodeMapCell *cached_node = hashmap_search(node_map, &nodes[nodes_len].ip);
-        if (cached_node != NULL)
-            nodes[nodes_len].port = cached_node->port;
-        else
-            nodes[nodes_len].port = DEFAULT_PORT;
-
-        nodes[nodes_len].agent_fd = -1;
-
-        if (streq(node_information[1], "cpu")) {
-            nodes[nodes_len].res_kind = RES_KIND_CPU;
-            nodes[nodes_len].amount = atoi(node_information[2]);
-        } else if (streq(node_information[1], "mem")) {
-            nodes[nodes_len].res_kind = RES_KIND_MEM;
-            nodes[nodes_len].amount = atoi(node_information[2]);
-        } else if (streq(node_information[1], "gpu")) {
-            nodes[nodes_len].res_kind = RES_KIND_GPU;
-            nodes[nodes_len].amount = atoi(node_information[2]);
-        }
-
-        free(node_information);
-        ++nodes_len;
-
-        if (nodes_len >= cap/2) {
-            cap *= 2;
-            nodes = realloc(nodes, cap*sizeof(NodeAllocationInfo));
-        }
-    }
-
-    erl.num_allocations = nodes_len;
-    return erl;
-}
-
-
 
 // Handles an incoming job request from the erlang client
 void handle_job_request(ErlangRequest erl)
@@ -1211,8 +914,7 @@ void handle_job_status(ErlangRequest erl)
     send(erl.erlang_fd, buffer, strlen(buffer), 0);
 }
 
-// Function that only works with the following implementation: (queue of void* data that stores a JobQueueData structure)
-// Given a queue that satisfies the criteria above, returns 1 if there is a node in which JobQueueData.job_cell.job_id == id, 0 if not
+// Given a queue of jobs, determines if there's a job with a given id
 bool find_in_queue(Queue queue, int id)
 {
     for (QueueNode* actual_node = queue; actual_node != NULL; actual_node = actual_node->next) {
@@ -1224,8 +926,7 @@ bool find_in_queue(Queue queue, int id)
     return false;
 }
 
-// Function that only works with the following implementation: (list of void* data that stores an int* job_id)
-// Given a list that satisfies the criteria above, returns 1 if there is a node with id as *job_iid, 0 if no such node exists.
+// Given a list of job ids, determines if there's a id is in the list
 bool find_in_list(List list, int id)
 {
     for (ListNode *actual_node = list; actual_node != NULL; actual_node = actual_node->next) {
@@ -1237,8 +938,7 @@ bool find_in_list(List list, int id)
     return false;
 }
 
-// Given the timed_out_jobs list (which stores a job_id &int in data)
-// deletes the node whose *job_id is equal to id
+// Delete a job with given id from timed out jobs list
 void delete_from_timed_out_jobs(int id)
 {
     ListNode *node_before = timed_out_jobs;
