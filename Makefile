@@ -1,5 +1,5 @@
 CC=gcc
-C_SRC=agente.c utils.c types.c resources.c erl.c \
+C_SRC=agente.c utils.c types.c resources.c erl.c agents.c \
 	  ds/hashmap.c ds/queue.c ds/list.c
 C_OBJ=$(C_SRC:.c=.o)
 C_OUT=agente
@@ -30,6 +30,9 @@ resources.o: resources.c
 	$(CC) -c $^ $(CFLAGS)
 
 erl.o: erl.c
+	$(CC) -c $^ $(CFLAGS)
+
+agents.o: agents.c
 	$(CC) -c $^ $(CFLAGS)
 
 clean:

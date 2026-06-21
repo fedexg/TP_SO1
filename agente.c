@@ -23,6 +23,7 @@
 #include "const.h"
 #include "types.h"
 #include "resources.h"
+#include "agents.h"
 #include "erl.h"
 
 int listen_public_sock, listen_erlang_sock;
@@ -52,10 +53,6 @@ int startup(void);
 void send_udp_announce(void);
 int add_descriptors(void);
 void *epoll_handler(void *arg);
-void handle_c_agent(int c_agent_fd);
-void handle_unexpected_disconnection(int fd);
-Request parse_request(char **request_fields, int n_fields);
-void process_request(Request req, int fd);
 void check_agent_expiration_time(void);
 void handle_udp_packet(int udp_fd);
 int close_epoll(void);
@@ -442,7 +439,9 @@ void *epoll_handler(void *arg)
                 int client_fd = events[i].data.fd;
 
                 if (client_fd == connect_public_sock)
-                    handle_c_agent(client_fd);
+                    handle_c_agent(client_fd, node_map, job_map,
+                                    job_queue, &node_resources,
+                                    epoll_fd);
                 else if (client_fd == connect_erlang_sock)
                     handle_erlang_client(node_map, job_map,
                                          job_queue, timed_out_jobs,
@@ -458,162 +457,6 @@ void *epoll_handler(void *arg)
                 }
             }
         }
-    }
-}
-
-void handle_c_agent(int fd)
-{
-    char buffer[BUFFER_MAX_SIZE];
-    memset(buffer, 0, BUFFER_MAX_SIZE);
-    ssize_t bytes_read = read(fd, buffer, BUFFER_MAX_SIZE - 1);
-    if (bytes_read <= 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return;
-
-        error("Error intentando leer de un agente de C");
-
-        handle_unexpected_disconnection(fd);
-
-        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-        close(fd);
-    } else {
-        int length = 0;
-        char **request_fields = split(buffer, " ", &length);
-        Request request = parse_request(request_fields, length);
-        process_request(request, fd);
-        free(request_fields);
-    }
-}
-
-void handle_unexpected_disconnection(int fd)
-{
-    NodeMapCell *dead_node = NULL;
-
-    // Find dead node file descriptor
-    for (int i = 0; i < node_map->cap; ++i) {
-        bool exists_item = node_map->items[i].data != NULL && !node_map->items[i].deleted;
-        if (exists_item) {
-            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
-            if (node->socket_fd == fd) {
-                dead_node = node;
-                break;
-            }
-        }
-    }
-
-    if (dead_node == NULL)
-        return;
-
-    // Find affected jobs
-    for (int i = 0; i < job_map->cap; ++i) {
-        bool exists_job = job_map->items[i].data != NULL && !job_map->items[i].deleted;
-        if (exists_job) {
-            JobMapCell *job = (JobMapCell *)job_map->items[i].data;
-            bool affected_job = false;
-
-            // Check if job depended on dead node
-            for (int j = 0; j < job->num_remotely_allocated; ++j) {
-                RemoteAllocation *remote = &job->remote_allocations[j];
-                if (streq(remote->ip, dead_node->ip) &&
-                        ((remote->resources.current_cpu > 0) ||
-                        (remote->resources.current_mem > 0)  ||
-                        (remote->resources.current_gpu > 0))) {
-                    affected_job = true;
-                    break;
-                }
-            }
-
-            // Return resources to affected nodes
-            if (affected_job) {
-                for (int j = 0; j < job->num_remotely_allocated; ++j) {
-                    RemoteAllocation *remote = &job->remote_allocations[j];
-
-                    // If it's a non-dead node, restore its resources
-                    if (!streq(remote->ip, dead_node->ip)) {
-                        NodeMapCell *alive_node = hashmap_search(node_map, &remote->ip);
-                        if (alive_node != NULL) {
-                            alive_node->resources.current_cpu += remote->resources.current_cpu;
-                            alive_node->resources.current_mem += remote->resources.current_mem;
-                            alive_node->resources.current_gpu += remote->resources.current_gpu;
-                        }
-                    }
-
-                    memset(&remote->resources, 0, sizeof(LocalResources));
-                }
-
-                if (job->granted_resources.current_cpu > 0)
-                    give_resources(&node_resources, RES_KIND_CPU, job->granted_resources.current_cpu);
-                if (job->granted_resources.current_mem > 0)
-                    give_resources(&node_resources, RES_KIND_MEM, job->granted_resources.current_mem);
-                if (job->granted_resources.current_gpu > 0)
-                    give_resources(&node_resources, RES_KIND_GPU, job->granted_resources.current_gpu);
-
-                // Delete job
-                long long delete_id = job->job_id;
-                free(job->remote_allocations);
-                hashmap_delete(job_map, &delete_id);
-            }
-        }
-    }
-
-    hashmap_delete(node_map, &dead_node->ip);
-    free(dead_node);
-}
-
-// Given a request and a file descriptor, processes the agent c request.
-void process_request(Request req, int fd)
-{
-    char response_to_agent[128] = {0};
-    switch (req.kind) {
-    case REQUEST_KIND_RESERVE:
-        if (exists_resource(&node_resources, req.res_kind, req.amount)) {
-            JobMapCell *cell = hashmap_search(job_map, &req.job_id);
-
-            // We didn't find a cell with this job id. We create it.
-            if (cell == NULL)
-                cell = calloc(1, sizeof(JobMapCell));
-
-            increase_resources(&(cell->granted_resources),req.res_kind, req.amount);
-            hashmap_put(job_map, &cell);
-            give_resources(&node_resources, req.res_kind, req.amount);
-            sprintf(response_to_agent, "GRANTED %lld", req.job_id);
-            send(fd, response_to_agent, 8, 0);
-        } else {
-            sprintf(response_to_agent, "DENIED %lld", req.job_id);
-            send(fd, response_to_agent, 8, 0);
-        }
-
-        break;
-
-    case REQUEST_KIND_RELEASE:
-        increase_resources(&node_resources, req.res_kind, req.amount);
-        JobMapCell *cell = hashmap_search(job_map, &req.job_id);
-
-        // Cell not found, therefore no job with that id was found.
-        if (cell == NULL) {
-            sprintf(response_to_agent, "DENIED %lld", req.job_id);
-            send(fd, response_to_agent, 8, 0);
-            return;
-        }
-
-        give_resources(&(cell->granted_resources), req.res_kind, req.amount);
-        if (cell->granted_resources.current_cpu == 0 && cell->granted_resources.current_gpu == 0 &&
-            cell->granted_resources.current_mem) {
-            hashmap_delete(job_map, &req.job_id);
-            free(cell);
-        } else
-            hashmap_put(job_map, &cell);
-
-        while (!queue_empty(job_queue)) {
-            // TODO: this doesn't type :/ 
-            ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
-            job_queue = dequeue(job_queue, (QueueFreeFunc)job_free);
-            handle_job_request(node_map, job_queue, erl, epoll_fd);
-        }
-
-        break;
-    default:
-        break;
     }
 }
 
