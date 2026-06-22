@@ -27,7 +27,8 @@ scheduler_loop(Socket, Job_Queue, Client_Map, N, Working_Bool) ->
     case {queue:is_empty(Job_Queue), Working_Bool} of                   
         % La cola de JOBS tiene elementos: atiende el JOB que desencola. 
         {false, false} -> 
-            {{Job_Id, Job_Info}, New_Job_Queue} = queue:out(Job_Queue),             % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
+            {Queue_Head, New_Job_Queue} = queue:out(Job_Queue),             % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
+            {value, {Job_Id, Job_Info}} = Queue_Head,
             spawn(?MODULE, job_handler, [Socket, Nodes_Info, Job_Id, Job_Info, Client_Map]),
             New_Client_Map = maps:remove(Job_Id, Client_Map),                       % <- Saca el JOB atendido
             scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N, true);               
@@ -38,7 +39,7 @@ scheduler_loop(Socket, Job_Queue, Client_Map, N, Working_Bool) ->
                         Client_Id ! {given_jobid, N},                               % <- Confirma al cliente el almacenamiento de su pedido a la cola.  
                         scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N+1, Working_Bool); 
                     {job_finished, Job_Id} ->
-                        send_to_agent(Socket, release, Job_Id),                   
+                        send_to_agent(Socket, release, integer_to_list(Job_Id)),                   
                         scheduler_loop(Socket, Job_Queue, Client_Map, N, false);
                     _ -> 
                         scheduler_loop(Socket, Job_Queue, Client_Map, N, Working_Bool)
@@ -105,13 +106,13 @@ fold_node_data(L, Acum, Data_Index) ->
 job_request_inbox(Socket) ->
     Data = gen_tcp:recv(Socket, 0),  %<- Espera a que responda el Agente C
     case string:split(Data, " ") of
-        ["JOB_GRANTED" | Job_Id] -> valid_job; 
+        ["JOB_GRANTED" | _Job_Id] -> valid_job; 
         
         ["JOB_DENIED" | Job_Id] -> io:fwrite("Job is on the queue by the C agent~n"),
                                     timer:sleep(5000),
-                                    send_to_agent(Socket, status, Job_Id); 
+                                    send_to_agent(Socket, status, hd(Job_Id)); 
 
-        ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
+        ["JOB_TIMEOUT" | _Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
                                     invalid_job;
 
         Any -> io:fwrite("Command error: ~p~n", [Any]),
@@ -173,7 +174,7 @@ manage_job_info(Socket, List_Nodes, Job_Id, Job_Info) ->
     GPU_TO_ASK = ammout_to_ask(GPU, GPU_LIST, 1),
     String_To_Send = string_of_ip_request(IP_LIST, CPU_TO_ASK,"cpu") ++
                      string_of_ip_request(IP_LIST, MEM_TO_ASK,"mem") ++ string_of_ip_request(IP_LIST, GPU_TO_ASK, "gpu"),
-    send_to_agent(Socket, request, Job_Id++" "++String_To_Send).
+    send_to_agent(Socket, request, integer_to_list(Job_Id)++" "++String_To_Send).
 % %  
 
 map_node_data(L, Data_Index) ->
