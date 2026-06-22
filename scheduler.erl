@@ -74,7 +74,7 @@ request_nodes_info(Socket) ->
 
 parse_node_info(Data) ->
     case string:split(Data, " ") of
-        ["NODES" | String_Nodes] -> List_Nodes = string:split(String_Nodes, ";"), % ["NODES"] | ["IP_N1:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3", "IP_N2:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3", ...] %"
+        ["NODES" | String_Nodes] -> List_Nodes = string:tokens(String_Nodes, ";"), % ["NODES"] | ["IP_N1:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3", "IP_N2:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3", ...] %"
                                     manage_nodes_info(List_Nodes); 
         Any -> io:fwrite("Error in info: ~p~n", [Any])
     end.
