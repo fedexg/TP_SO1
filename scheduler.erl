@@ -110,7 +110,7 @@ job_request_inbox(Socket) ->
         
         ["JOB_DENIED" | Job_Id] -> io:fwrite("Job is on the queue by the C agent~n"),
                                     timer:sleep(5000),
-                                    send_to_agent(Socket, status, Job_Id); 
+                                    send_to_agent(Socket, status, hd(Job_Id)); 
 
         ["JOB_TIMEOUT" | _Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
                                     invalid_job;
