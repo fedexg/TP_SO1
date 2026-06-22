@@ -1,9 +1,3 @@
--module(scheluder).
--export([start/0]).
-
--export([start_scheduler/0]).
-
-
 -module(scheduler).
 -export([start/0]).
 
@@ -216,10 +210,6 @@ string_of_ip_request(IP_LIST, DATA_TO_ASK, DATA_TYPE) ->
 %                                                               CLIENTE
 % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 %                                                               
-% Recorrer ITH_LIST, haciendo JOB_INFO_ITH - ITH_LIST[ITH], hasta que JOB_INFO_ITH <= 0
-% Da una lista de {indice_ip, cuanto_pedir}
-% hacer un string "@"++IP_LIST[indice_ip]++":cpu:"++cuanto_pedir
-
 % client_simulator/1: Simulador de un cliente que se comunica con el Scheduler para pedir recursos.
 % do_job/2: Si recibe que su trabajo fue marcado valido por el Sch. entonces procede a simular trabajar
 %         (espera 10 segundos) y responde al Sch. que terminó de trabajar.
@@ -261,46 +251,3 @@ do_job(Job_Id, Scheduler) ->
 %   "JOB_TIMEOUT", se mata
 % Erlang puede enviar "JOB_STATUS + ID"                     (¿Que hace?)
 % El erlang libera los recursos con "JOB_RELEASE + ID"
-
-
-start() ->
-    {ok, ListenSocket} = gen_tcp:listen(12529, [{reuseaddr, true}]),
-    accept_loop(ListenSocket).
-
-accept_loop(ListenSocket) ->
-    {ok, Socket} = gen_tcp:accept(ListenSocket),
-    spawn(fun() -> handle_client(Socket) end).
-
-handle_client(Socket) ->
-    case gen_tcp:recv(Socket, 0) of
-        {ok, Data} ->
-            request_nodes_info(Socket, Data);
-            %gen_tcp:send(Socket, Reply), 
-            %handle_client(Socket);
-        {error, closed} -> io:fwrite("Socket closed ~n");
-        {error, Reason} -> io:fwrite("Error, reason: ~p~n", Reason)
-    end,
-    accept_loop(Socket).
-
-request_nodes_info(Socket, Data) ->
-    gen_tcp:send(Socket, "GET_NODES"),
-    case gen_tcp:recv(Socket, 0) of
-        {ok, Data} -> parse_node_info(Socket, Data);
-        {error, closed} -> io:fwrite("Socket closed ~n");
-        {error, Reason} -> io:fwrite("Error, reason: ~p~n", Reason)
-    end,
-
-parse_node_info(Socket, Data) ->
-    case string:split(Data, " ") of
-        ["NODES" | Lista_Nodos] -> 
-        Any -> io:fwrite("Error in info: ~p~n" [Any])
-    end.
-
-
-job_request_inbox(Socket, Data) ->
-    case string:split(Data, " ") of
-        ["JOB_GRANTED" | Job_Id] ->
-        ["JOB_DENIED" | Job_Id] ->
-        ["JOB_TIMEOUT" | Job_Id] ->
-        Any -> io:fwrite("Command error: ~p~n", [Any])
-    end.
