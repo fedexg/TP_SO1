@@ -68,8 +68,14 @@ int main(int argc, char **argv)
     state.node_resources.current_gpu = state.node_resources.gpu;
     state.node_resources.current_mem = state.node_resources.mem;
 
-    state.node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy, (CmpFunc)node_cell_cmp, (FreeFunc)node_cell_free, (HashFunc)node_cell_hash); 
-    state.job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy, (CmpFunc)job_cell_cmp, (FreeFunc)job_cell_free, (HashFunc)job_cell_hash);
+    state.node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy,
+                                 (CmpFunc)node_cell_cmp,
+                                 (FreeFunc)node_cell_free,
+                                 (HashFunc)node_cell_hash);
+    state.job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy,
+                                (CmpFunc)job_cell_cmp,
+                                (FreeFunc)job_cell_free,
+                                (HashFunc)job_cell_hash);
     state.job_queue = queue_make();
     state.timed_out_jobs = list_make();
 
@@ -146,12 +152,13 @@ void *checker_thread_handler(void *arg)
         for (QueueNode *p = state.job_queue; p != NULL; p = p->next) {
             QueueNode *next = p->next;
             JobQueueData *job = (JobQueueData *)p->data;
-            if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE){
+            if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE) {
                 char msg[BUFFER_MAX_SIZE] = { 0 };
-                sprintf(msg,"JOB_TIMEOUT %lld",job->request.job_id);
-                send(job->request.erlang_fd,msg,strlen(msg),0);
+                sprintf(msg, "JOB_TIMEOUT %lld", job->request.job_id);
+                send(job->request.erlang_fd, msg, strlen(msg), 0);
                 delete_from_job_queue(job);
             }
+
             // We do this to prevent a potential use after free
             p = next;
         }
