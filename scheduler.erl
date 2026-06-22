@@ -39,7 +39,7 @@ scheduler_loop(Socket, Job_Queue, Client_Map, N, Working_Bool) ->
                         Client_Id ! {given_jobid, N},                               % <- Confirma al cliente el almacenamiento de su pedido a la cola.  
                         scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N+1, Working_Bool); 
                     {job_finished, Job_Id} ->
-                        send_to_agent(Socket, release, Job_Id),                   
+                        send_to_agent(Socket, release, integer_to_list(Job_Id)),                   
                         scheduler_loop(Socket, Job_Queue, Client_Map, N, false);
                     _ -> 
                         scheduler_loop(Socket, Job_Queue, Client_Map, N, Working_Bool)

@@ -30,13 +30,15 @@ not_agent_loop(Map_Of_JOBs) ->
             Data_Splited = string:tokens(STRING, " "),
             Pid_To_Answer = list_to_pid(lists:nth(1, Data_Splited)),
             Job_Id = lists:nth(2, Data_Splited),
-            case io:get_line("TESTER :: 1: Enviar un 'JOB_GRANTED' al scheduler\nTESTER :: 2: Enviar un 'JOB_DENIED' al scheduler\nTESTER ::") of 
+            io:fwrite("TESTER :: JOB_REQUEST, Job_Id: ~p~n",[Job_Id]),
+            case io:get_line("TESTER :: 1: Enviar un 'JOB_GRANTED' al scheduler\nTESTER :: 2: Enviar un 'JOB_DENIED' al scheduler\nTESTER :: ") of 
                 "1\n" -> 
                     Pid_To_Answer ! {ok, "JOB_GRANTED " ++ Job_Id}, %JOB_GRATED 12
-                    not_agent_loop(maps:puts(Job_Id, granted, Map_Of_JOBs));
+                    io:fwrite("El job id es algo asi: ~p~n",[list_to_integer(Job_Id)]),
+                    not_agent_loop(maps:put(list_to_integer(Job_Id), granted, Map_Of_JOBs));
                 "2\n" ->
                     Pid_To_Answer ! {ok, "JOB_DENIED " ++ Job_Id},
-                    not_agent_loop(maps:puts(Job_Id, denied, Map_Of_JOBs))
+                    not_agent_loop(maps:put(list_to_integer(Job_Id), denied, Map_Of_JOBs))
             end;
         
         "JOB_STATUS " ++ STRING -> %JOB_STATUS <PID> Job_Id
@@ -46,16 +48,17 @@ not_agent_loop(Map_Of_JOBs) ->
             case io:get_line("TESTER :: 1: Enviar un 'JOB_GRANTED' al scheduler\nTESTER :: 2: Enviar un 'JOB_DENIED' al scheduler\nTESTER :: 3: Enviar un 'JOB_TIMEOUT' al scheduler\nTESTER ::") of 
                 "1\n" -> 
                     Pid_To_Answer ! {ok, "JOB_GRANTED " ++ Job_Id}, %JOB_GRATED 12
-                    not_agent_loop(maps:puts(Job_Id, granted, Map_Of_JOBs));
+                    not_agent_loop(maps:put(Job_Id, granted, Map_Of_JOBs));
                 "2\n" ->
                     Pid_To_Answer ! {ok, "JOB_DENIED " ++ Job_Id},
-                    not_agent_loop(maps:puts(Job_Id, denied, Map_Of_JOBs));
+                    not_agent_loop(maps:put(Job_Id, denied, Map_Of_JOBs));
                 "3\n" ->
                     Pid_To_Answer ! {ok, "JOB_TIMEOUT " ++ Job_Id},
                     not_agent_loop(maps:remove(Job_Id, Map_Of_JOBs))
             end;
         
         "JOB_RELEASE " ++ STRING -> %JOB_RELEASE <PID> Job_Id
+            io:fwrite("~s~n", [STRING]),
             Data_Splited = string:tokens(STRING, " "),
             Job_Id = lists:nth(2, Data_Splited),
             case maps:find(Job_Id, Map_Of_JOBs) of
@@ -111,7 +114,8 @@ scheduler_loop(Not_Socket, Job_Queue, Client_Map, N) ->
     case queue:is_empty(Job_Queue) of                   % (En mi opinion) capaz un poco excesivo, podría hacerlo una vez cada N tiempo
         % La cola de JOBS tiene elementos: atiende el JOB que desencola. 
         false -> 
-            {{Job_Id, Job_Info}, New_Job_Queue} = queue:out(Job_Queue),                 % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
+            {Queue_Head, New_Job_Queue} = queue:out(Job_Queue),                 % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
+            {value, {Job_Id, Job_Info}} = Queue_Head,
             Msg_to_client = check_job_valid(Not_Socket, Nodes_Info, Job_Id, Job_Info),  % <- devuelve un mensaje para que el cliente sepa si su trabajo fue atendido con exito.
             maps:get(Job_Id, Client_Map) ! Msg_to_client,                               % ¡IMPORTANTE! Durante ésta funcion, el Agente C recibe el pedido y el scheduler queda en escucha.
             New_Client_Map = maps:remove(Job_Id, Client_Map),                           % <- Saca el JOB atendido
@@ -121,6 +125,7 @@ scheduler_loop(Not_Socket, Job_Queue, Client_Map, N) ->
     end,
     receive
         {new_job, Client_Id, Job_Info_Recv} -> 
+            io:fwrite("DANTEEEEE ~p~n", [Job_Info_Recv]),
             Neew_Job_Queue = queue:in({N, Job_Info_Recv},Job_Queue),     % <- Encola el JOB con su id unico.
             Neew_Client_Map = maps:put(N, Client_Id, Client_Map),        % <- Agrega en el diccionario el JOB asignado al cliente.
             Client_Id ! {given_jobid, N},                               % <- Confirma al cliente el almacenamiento de su pedido a la cola.  
@@ -215,7 +220,7 @@ send_to_agent(Not_Socket, Message_Type, INFO) ->
                    job_request_inbox(Not_Socket);
         status ->  Not_Socket ! "JOB_STATUS "++pid_to_list(self())++" "++INFO,  %JOB_STATUS <PID> Job_Id
                    job_request_inbox(Not_Socket);
-        release -> Not_Socket ! "JOB_RELEASE "++pid_to_list(self())++" "++INFO, %JOB_RELEASE <PID> Job_Id
+        release -> Not_Socket ! "JOB_RELEASE "++pid_to_list(self())++" "++integer_to_list(INFO), %JOB_RELEASE <PID> Job_Id
                    timer:sleep(5000)
     end.
 
@@ -238,7 +243,7 @@ send_to_agent(Not_Socket, Message_Type, INFO) ->
 % string_of_ip_request/3: Funcion auxiliar que parsea el resultado final a enviar a Agente C.
 % %
 check_job_valid(Not_Socket, Nodes_Info, Job_Id, Job_Info) ->
-    io:fwrite("check_job_valid:~p~n",[Nodes_Info]),
+    io:fwrite("check_job_valid:~p~n",[Job_Info]),
     {Max_CPU, Max_MEM, Max_GPU, List_Nodes} = Nodes_Info,
     {CPU, MEM, GPU} = Job_Info,
     if 
@@ -259,7 +264,7 @@ manage_job_info(Not_Socket, List_Nodes, Job_Id, Job_Info) ->
     GPU_TO_ASK = ammout_to_ask(GPU, GPU_LIST, 1),
     String_To_Send = string_of_ip_request(IP_LIST, CPU_TO_ASK,"cpu") ++
                      string_of_ip_request(IP_LIST, MEM_TO_ASK,"mem") ++ string_of_ip_request(IP_LIST, GPU_TO_ASK, "gpu"),
-    send_to_agent(Not_Socket, request, Job_Id++" "++String_To_Send). %JOB REQUEST @192.168.1.2:cpu:2 @192.168.1.3:gpu:1
+    send_to_agent(Not_Socket, request, integer_to_list(Job_Id)++" "++String_To_Send). %JOB REQUEST @192.168.1.2:cpu:2 @192.168.1.3:gpu:1
 % %                    
 map_node_data(L, Data_Index) ->
     Data = string:tokens(L, ":"),
