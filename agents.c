@@ -17,7 +17,7 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
 
 void handle_c_agent(int c_agent_fd,
                     Hashmap node_map, Hashmap job_map,
-                    Queue job_queue,
+                    Queue job_queue, List timed_out_jobs,
                     LocalResources *node_resources,
                     MutexCond protection,
                     int epoll_fd)
@@ -40,7 +40,8 @@ void handle_c_agent(int c_agent_fd,
         char **request_fields = split(buffer, " ", &length);
         Request request = parse_request(request_fields, length);
         process_request(node_map, job_map,
-                        request, node_resources, job_queue,
+                        request, node_resources,
+                        timed_out_jobs, job_queue,
                         protection,
                         c_agent_fd, epoll_fd);
         free(request_fields);
@@ -49,7 +50,8 @@ void handle_c_agent(int c_agent_fd,
 
 // Given a request and a file descriptor, processes the agent c request.
 void process_request(Hashmap node_map, Hashmap job_map,
-                     Request req, LocalResources *node_resources, Queue job_queue,
+                     Request req, LocalResources *node_resources,
+                     List timed_out_jobs, Queue job_queue,
                      MutexCond protection,
                      int fd, int epoll_fd)
 {
@@ -97,7 +99,7 @@ void process_request(Hashmap node_map, Hashmap job_map,
         while (!queue_empty(job_queue)) {
             ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
             job_queue = dequeue(job_queue, (QueueFreeFunc)job_free);
-            handle_job_request(node_map, job_map, node_resources, job_queue, erl,
+            handle_job_request(node_map, job_map, node_resources, timed_out_jobs, job_queue, erl,
                                protection, epoll_fd);
         }
 

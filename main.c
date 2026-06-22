@@ -132,7 +132,7 @@ void *worker_thread_handler(void *arg)
     while (true) {
         if (!queue_empty(job_queue)) {
             ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
-            handle_job_request(node_map, job_map, &node_resources, job_queue, erl, protection, epoll_fd);
+            handle_job_request(node_map, job_map, &node_resources, timed_out_jobs, job_queue, erl, protection, epoll_fd);
             job_queue = dequeue(job_queue, (QueueFreeFunc)job_queue);
         }
     }
@@ -469,7 +469,8 @@ void *epoll_handler(void *arg)
 
                 if (client_fd == connect_public_sock)
                     handle_c_agent(client_fd, node_map, job_map,
-                                    job_queue, &node_resources,
+                                    job_queue, timed_out_jobs,
+                                    &node_resources,
                                     protection,
                                     epoll_fd);
                 else if (client_fd == connect_erlang_sock)
