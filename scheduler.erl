@@ -1,7 +1,7 @@
 -module(scheduler).
 -export([start/0]).
 
--export([start_scheduler/0]).
+-export([start_scheduler/0, job_handler/5]).
 -define(PORT,1337).
 
 % Inicia el iniciador del Scheduler y el simulador de cliente 
