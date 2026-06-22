@@ -15,23 +15,27 @@
 void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
                                      LocalResources *node_resources, int fd);
 
+// Manejar requests (si es posible) proveniente de agentes de C
+// Si ocurre una desconexión inesperada, se toma en cuenta
 void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
 {
     char buffer[BUFFER_MAX_SIZE];
     memset(buffer, 0, BUFFER_MAX_SIZE);
+
+    // Leemos el mensaje que nos envía el agente de C
     ssize_t bytes_read = read(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read <= 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
 
         error("Error intentando leer de un agente de C");
-
         handle_unexpected_disconnection(state->node_map, state->job_map,
                                         &state->node_resources, c_agent_fd);
 
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c_agent_fd, NULL);
         close(c_agent_fd);
     } else {
+        // Procesamos la petición que nos hizo
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
         Request request = parse_request(request_fields, length);
@@ -40,25 +44,28 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
     }
 }
 
-// Given a request and a file descriptor, processes the agent c request.
+// Procesa la petición proveniente de un agente C
 void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *state)
 {
     char response_to_agent[128] = {0};
     switch (req.kind) {
     case REQUEST_KIND_RESERVE:
+        // Chequeamos que podemos reservar recursos
         if (exists_resource(&state->node_resources, req.res_kind, req.amount)) {
             JobMapCell *cell = hashmap_search(state->job_map, &req.job_id);
 
-            // We didn't find a cell with this job id. We create it.
+            // No encontramos un trabajo con este id, así que lo creamos
             if (cell == NULL)
                 cell = calloc(1, sizeof(JobMapCell));
 
             increase_resources(&cell->granted_resources, req.res_kind, req.amount);
             hashmap_put(state->job_map, &cell);
             give_resources(&state->node_resources, req.res_kind, req.amount);
+
+            // Se pudo reservar recursos, así que enviamos GRANTED
             sprintf(response_to_agent, "GRANTED %lld", req.job_id);
             send(c_agent_fd, response_to_agent, 8, 0);
-        } else {
+        } else { // En caso contrario, enviamos DENIED
             sprintf(response_to_agent, "DENIED %lld", req.job_id);
             send(c_agent_fd, response_to_agent, 8, 0);
         }
@@ -66,16 +73,21 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
         break;
 
     case REQUEST_KIND_RELEASE:
+        // Retomamos los recursos que dimos al agente que pidió recursos
         increase_resources(&state->node_resources, req.res_kind, req.amount);
         JobMapCell *cell = hashmap_search(state->job_map, &req.job_id);
 
-        // Cell not found, therefore no job with that id was found.
+        // No encontramos un trabajo con ese id, así que enviamos DENIED
         if (cell == NULL) {
             sprintf(response_to_agent, "DENIED %lld", req.job_id);
             send(c_agent_fd, response_to_agent, 8, 0);
             return;
         }
 
+        // El trabajo existe, entonces devolvemos los recursos a ese agente
+        // y eliminamos el trabajo en caso de no tener más recursos que usar;
+        // De lo contrario, lo ponemos en nuestra tabla de trabajos para seguir
+        // usandolo
         give_resources(&cell->granted_resources, req.res_kind, req.amount);
         if (cell->granted_resources.current_cpu == 0 && cell->granted_resources.current_gpu == 0 &&
             cell->granted_resources.current_mem) {
@@ -84,6 +96,7 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
         } else
             hashmap_put(state->job_map, &cell);
 
+        // Atendemos solicitudes encoladas en orden
         while (!queue_empty(state->job_queue)) {
             ErlangRequest erl = *(ErlangRequest *)queue_head(state->job_queue);
             state->job_queue = dequeue(state->job_queue, (QueueFreeFunc)job_free);
@@ -96,16 +109,19 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
     }
 }
 
+// Maneja la liberación de recursos afectados por un nodo muerto
 void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
                            LocalResources *node_resources)
 {
+    // Buscamos jobs que dependan de node, y si es así, liberamos sus recursos
+    // y los sacamos de la tabla de trabajos
     for (int i = 0; i < job_map->cap; ++i) {
         bool exists_job = job_map->items[i].data != NULL && !job_map->items[i].deleted;
         if (exists_job) {
             JobMapCell *job = (JobMapCell *)job_map->items[i].data;
             bool affected_job = false;
 
-            // Check if job depended on dead node
+            // Chequeamos que el job dependa de node
             for (int j = 0; j < job->num_remotely_allocated; ++j) {
                 RemoteAllocation *remote = &job->remote_allocations[j];
                 if (streq(remote->ip, node->ip) &&
@@ -117,12 +133,12 @@ void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
                 }
             }
 
-            // Return resources to affected nodes
+            // Devolvemos los recursos a nodos con trabajos afectados
             if (affected_job) {
                 for (int j = 0; j < job->num_remotely_allocated; ++j) {
                     RemoteAllocation *remote = &job->remote_allocations[j];
 
-                    // If it's a non-dead node, restore its resources
+                    // Si no está muerto, restauramos los recursos
                     if (!streq(remote->ip, node->ip)) {
                         NodeMapCell *alive_node = hashmap_search(node_map, &remote->ip);
                         if (alive_node != NULL) {
@@ -142,7 +158,7 @@ void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
                 if (job->granted_resources.current_gpu > 0)
                     give_resources(node_resources, RES_KIND_GPU, job->granted_resources.current_gpu);
 
-                // Delete job
+                // Borramos el job afectado
                 long long delete_id = job->job_id;
                 free(job->remote_allocations);
                 hashmap_delete(job_map, &delete_id);
@@ -151,12 +167,13 @@ void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
     }
 }
 
+// Maneja desconexiones inesperadas
 void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
                                      LocalResources *node_resources, int fd)
 {
     NodeMapCell *dead_node = NULL;
 
-    // Find dead node file descriptor
+    // Encontramos el nodo muerto según fd
     for (int i = 0; i < node_map->cap; ++i) {
         bool exists_item = node_map->items[i].data != NULL && !node_map->items[i].deleted;
         if (exists_item) {
@@ -168,11 +185,14 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
         }
     }
 
+    // No hay desconexión inesperada; proseguimos
     if (dead_node == NULL)
         return;
 
+    // Liberamos los recursos de los jobs que dependan de este nodo
     release_affected_jobs(dead_node, node_map, job_map, node_resources);
 
+    // Lo eliminamos de nuestra tabla de nodos
     hashmap_delete(node_map, &dead_node->ip);
     free(dead_node);
 }

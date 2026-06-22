@@ -58,6 +58,7 @@ int cleanup(int flags);
 
 int main(int argc, char **argv)
 {
+    // Inicializamos el estado global
     pthread_mutex_init(&state.protection.mutex, NULL);
     pthread_cond_init(&state.protection.nonempty_queue_cond, NULL);
 
@@ -79,12 +80,23 @@ int main(int argc, char **argv)
     state.job_queue = queue_make();
     state.timed_out_jobs = list_make();
 
+    // Si un programa se desconecta inesperadamente, decidimos
+    // ignorarlo, pues se maneja cuando read() <= 0
     signal(SIGPIPE, SIG_IGN);
 
     if (argc < 2)
         agent_port = DEFAULT_PORT;
     else
         agent_port = atoi(argv[1]);
+
+    // Estructura del programa:
+    //  1. Inicializar sockets e instancia de epoll
+    //  2. Añadir sockets de escucha y broadcast a la instancia de epoll
+    //  3. Arranque inicial del cliente
+    //  4. Llamar al thread que maneja requests
+    //  5. Llamar al thread que chequea recursos estancados
+    //  6. Llamar al bucle de epoll
+    //  7. Destruir recursos
 
     if (init_sockets() < 0)
         return 1;
@@ -122,6 +134,10 @@ int main(int argc, char **argv)
 
     pthread_cond_destroy(&state.protection.nonempty_queue_cond);
     pthread_mutex_destroy(&state.protection.mutex);
+    list_free(state.timed_out_jobs, (ListFreeFunc)free);
+    queue_free(state.job_queue, (QueueFreeFunc)job_free);
+    hashmap_free(state.job_map);
+    hashmap_free(state.node_map);
     return 0;
 }
 
@@ -141,7 +157,7 @@ void *worker_thread_handler(void *arg)
 void *checker_thread_handler(void *arg)
 {
     while (true) {
-        // If agent must use job_queue, give it time to do so
+        // Si el agente debe usar job_queue, darle tiempo para que lo haga
         sleep(CHECKER_QUEUE_USE_TIME);
         pthread_mutex_lock(&state.protection.mutex);
 
@@ -149,6 +165,9 @@ void *checker_thread_handler(void *arg)
             pthread_cond_wait(&state.protection.nonempty_queue_cond,
                               &state.protection.mutex);
 
+        // Buscamos en cada job de la cola de jobs, y si pasaron más de
+        // CHECKER_QUEUE_TIME_UNTIL_DELETE (15) segundos, se envía
+        // un timeout al cliente de Erlang que lo pidió
         for (QueueNode *p = state.job_queue; p != NULL; p = p->next) {
             QueueNode *next = p->next;
             JobQueueData *job = (JobQueueData *)p->data;
@@ -159,7 +178,7 @@ void *checker_thread_handler(void *arg)
                 delete_from_job_queue(job);
             }
 
-            // We do this to prevent a potential use after free
+            // Hacemos esto para prevenir un posible use-after-free
             p = next;
         }
 
@@ -169,20 +188,23 @@ void *checker_thread_handler(void *arg)
     return NULL;
 }
 
+// Elimina un job de job_queue
 void delete_from_job_queue(JobQueueData *job)
 {
+    // O la cola está vacía o el job no es válido.
+    // Entonces no se elimina nada
     if (state.job_queue == NULL || job == NULL)
         return;
 
     QueueNode *prev = NULL;
     QueueNode *curr = state.job_queue;
 
+    // Buscamos el job en la cola que coincida con job
     while (curr != NULL) {
-        // Check if this node contains the target job data
         if (curr->data == job) {
-            if (prev == NULL) // The target job is at the head of the queue
+            if (prev == NULL) // El job que buscamos está en el head de la cola
                 state.job_queue = curr->next;
-            else // The target job is in the middle or at the end
+            else // El job que buscamos está después
                 prev->next = curr->next;
 
             job_free(job);
@@ -195,7 +217,8 @@ void delete_from_job_queue(JobQueueData *job)
     }
 }
 
-// Initialize c agent and erlang sockets
+// Inicializa los sockets del agente C, el cliente Erlang
+// y el broadcast UDP
 int init_sockets(void)
 {
     if (init_agents_socket() < 0)
@@ -210,7 +233,7 @@ int init_sockets(void)
     return OK;
 }
 
-// Initializes the sockets used by the c agent
+// Inicializa el socket de escucha del agente C
 int init_agents_socket(void)
 {
     int yes = 1;
@@ -220,14 +243,14 @@ int init_agents_socket(void)
         return FAIL;
     }
 
-    // Set agent sockets to be reused
+    // Seteamos la opción de reusar la dirección y el puerto
     if (setsockopt(listen_public_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket público para ser reusado");
         close(listen_public_sock);
         return FAIL;
     }
 
-    // Bind and set socket to listen mode
+    // Bindeamos y esperamos desde el socket
     struct sockaddr_in sa_public;
     memset(&sa_public, 0, sizeof(sa_public));
     sa_public.sin_family = AF_INET;
@@ -249,7 +272,7 @@ int init_agents_socket(void)
     return OK;
 }
 
-// Initializes the erlang planner socket
+// Inicializa el socket de escucha del planeador de Erlang
 int init_listen_erlang_socket(void)
 {
     int yes = 1;
@@ -259,14 +282,14 @@ int init_listen_erlang_socket(void)
         return FAIL;
     }
 
-    // Set erlang sockets to be reused
+    // Seteamos la opción de reusar la dirección y el puerto
     if (setsockopt(listen_erlang_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket de Erlang para ser reusado");
         close(listen_erlang_sock);
         return FAIL;
     }
 
-    // Bind and set socket to listen mode
+    // Bindeamos y esperamos desde el socket
     struct sockaddr_in sa_erlang;
     memset(&sa_erlang, 0, sizeof(sa_erlang));
     sa_erlang.sin_family = AF_INET;
@@ -288,6 +311,7 @@ int init_listen_erlang_socket(void)
     return OK;
 }
 
+// Inicializa el socket de broadcast de UDP
 int init_udp_socket(void)
 {
     int yes = 1;
@@ -297,13 +321,13 @@ int init_udp_socket(void)
         return FAIL;
     }
 
-    // Give permission to be a broadcast socket
+    // Seteamos para que sea un socket de broadcast
     if (setsockopt(udp_broadcast_sock, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket de UDP para permitir broadcast");
         return FAIL;
     }
 
-    // Bind to any address found
+    // Bindeamos la dirección que encontremos
     struct sockaddr_in sa_udp;
     memset(&sa_udp, 0, sizeof(sa_udp));
     sa_udp.sin_family = AF_INET;
@@ -330,11 +354,11 @@ int init_timer(void)
 
     struct itimerspec expiration;
 
-    // First-time expiration check
+    // Chequeo de primer expiración
     expiration.it_value.tv_sec = 5;
     expiration.it_value.tv_nsec = 0;
 
-    // Periodic expiration check
+    // Chequeo periódico de expiración
     expiration.it_interval.tv_sec = 5;
     expiration.it_value.tv_nsec = 0;
 
@@ -344,7 +368,7 @@ int init_timer(void)
         return FAIL;
     }
 
-    if (add_descriptor(epoll_fd, timer_fd) < 0) {
+    if (add_descriptor(epoll_fd, timer_fd, NULL) < 0) {
         close(timer_fd);
         return FAIL;
     }
@@ -352,7 +376,7 @@ int init_timer(void)
     return OK;
 }
 
-// Initializes the epoll instance
+// Inicializa la instancia de epoll
 int init_epoll(void)
 {
     epoll_fd = epoll_create(1);
@@ -364,12 +388,16 @@ int init_epoll(void)
     return OK;
 }
 
+// Arranque inicial del agente C
 int startup(void)
 {
+    // Anuncia su existencia
     send_udp_announce();
+
     struct epoll_event startup_events[EPOLL_MAX_EVENTS];
     time_t start_time = time(NULL);
 
+    // Espera dos segundos para encontrar nodos activos
     if (time(NULL) - start_time < 2) {
         int ready = epoll_wait(epoll_fd, startup_events,
                                EPOLL_MAX_EVENTS, EPOLL_SHORT_TIMEOUT);
@@ -382,26 +410,27 @@ int startup(void)
     return OK;
 }
 
+// Anuncia la existencia del agente C usando el siguiente mensaje:
+// ANNOUNCE <port> cpu:<x> mem:<y> gpu:<z>
 void send_udp_announce(void)
 {
+    // Preparamos la configuracion del socket para
+    // enviar el mensaje
     struct sockaddr_in sa_broadcast;
     memset(&sa_broadcast, 0, sizeof(sa_broadcast));
     sa_broadcast.sin_family = AF_INET;
     sa_broadcast.sin_port = htons(agent_port);
     sa_broadcast.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 
-    char my_ip[64];
-    if (get_local_ip(my_ip, 64) < 0)
-        strcpy(my_ip, "127.0.0.1");
-
     char buffer[BUFFER_MAX_SIZE] = { 0 };
-    sprintf(buffer, "ANNOUNCE %s %d cpu:%d mem:%d gpu:%d",
-            my_ip, agent_port,
+    sprintf(buffer, "ANNOUNCE %d cpu:%d mem:%d gpu:%d",
+            agent_port,
             state.node_resources.cpu,
             state.node_resources.mem,
             state.node_resources.gpu);
 
-    // Because this is a UDP socket, we use sendto
+    // Mandamos el mensaje al socket de broadcast
+    // Como es un socket UDP, se utiliza sendto
     ssize_t bytes = sendto(udp_broadcast_sock, buffer, strlen(buffer), 0,
                             (struct sockaddr *)&sa_broadcast,
                             sizeof(sa_broadcast));
@@ -410,21 +439,22 @@ void send_udp_announce(void)
         error("Error intentando enviar ANNOUNCE");
 }
 
+// Añade los descriptores necesarios a la instancia de epoll
 int add_descriptors(void)
 {
-    if (add_descriptor(epoll_fd, listen_public_sock) < 0)
+    if (add_descriptor(epoll_fd, listen_public_sock, NULL) < 0)
         return FAIL;
 
-    if (add_descriptor(epoll_fd, listen_erlang_sock) < 0)
+    if (add_descriptor(epoll_fd, listen_erlang_sock, NULL) < 0)
         return FAIL;
 
-    if (add_descriptor(epoll_fd, udp_broadcast_sock) < 0)
+    if (add_descriptor(epoll_fd, udp_broadcast_sock, NULL) < 0)
         return FAIL;
 
     return OK;
 }
 
-// Handles incoming epoll events
+// Maneja eventos de epoll
 void *epoll_handler(void *arg)
 {
     for (;;) {
@@ -436,6 +466,8 @@ void *epoll_handler(void *arg)
 
         for (int i = 0; i < num_fds_ready; ++i) {
             if (events[i].data.fd == listen_public_sock) {
+                // Creamos un socket de conexión al agente de C
+                // para enviar y recibir mensajes
                 connect_public_sock = accept(listen_public_sock, NULL, NULL);
                 if (connect_public_sock == -1) {
                     error("Error intentando aceptar un agente");
@@ -444,11 +476,14 @@ void *epoll_handler(void *arg)
 
                 set_socket_nonblocking(connect_public_sock);
 
+                // Lo sumamos a la instancia de epoll
                 ev.events = EPOLLIN | EPOLLOUT;
                 ev.data.fd = connect_public_sock;
-                if (add_descriptor(epoll_fd, connect_public_sock) < 0)
+                if (add_descriptor(epoll_fd, connect_public_sock, &ev) < 0)
                     exit(EXIT_FAILURE);
             } else if (events[i].data.fd == listen_erlang_sock) {
+                // Creamos un socket de conexión al cliente de Erlang
+                // para enviar y recibir mensajes
                 connect_erlang_sock = accept(listen_erlang_sock, NULL, NULL);
                 if (connect_erlang_sock == -1) {
                     error("Error intentando aceptar un cliente Erlang");
@@ -457,19 +492,23 @@ void *epoll_handler(void *arg)
 
                 set_socket_nonblocking(connect_erlang_sock);
 
+                // Lo sumamos a la instancia de epoll
                 ev.events = EPOLLIN | EPOLLOUT;
                 ev.data.fd = connect_erlang_sock;
-                if (add_descriptor(epoll_fd, connect_erlang_sock) < 0)
+                if (add_descriptor(epoll_fd, connect_erlang_sock, &ev) < 0)
                     exit(EXIT_FAILURE);
             } else if (events[i].data.fd == udp_broadcast_sock)
+                // Si es el socket de broadcast, lo manejamos por separado
                 handle_udp_packet(events[i].data.fd);
             else if (events[i].data.fd == timer_fd) {
+                // Chequeamos si el tiempo de un agente expiró
                 long long expirations = 0;
                 read(timer_fd, &expirations, sizeof(long long));
                 check_agent_expiration_time();
             } else {
+                // Manejamos al agente de C como un cliente o
+                // al cliente de Erlang
                 int client_fd = events[i].data.fd;
-
                 if (client_fd == connect_public_sock)
                     handle_c_agent(client_fd, epoll_fd, &state);
                 else if (client_fd == connect_erlang_sock)
@@ -487,10 +526,15 @@ void *epoll_handler(void *arg)
     }
 }
 
+// Chequea si pasaron 15 segundos sin que un agente mande
+// un ANNOUNCE
 void check_agent_expiration_time(void)
 {
     time_t now = time(NULL);
 
+    // Buscamos entre los nodos que tenemos y si la última vez
+    // que se anunció fue hace más de 15 segundos, lo eliminamos
+    // y liberamos los recursos de jobs que dependían de él
     for (int i = 0; i < state.node_map->cap; ++i) {
         bool exists_item = state.node_map->items[i].data != NULL &&
                             !state.node_map->items[i].deleted;
@@ -505,7 +549,7 @@ void check_agent_expiration_time(void)
         }
     }
 
-    // Tell other agents we're alive
+    // Avisamos que estamos vivos cada cinco segundos
     ++seconds_passed;
     if (seconds_passed >= 5) {
         send_udp_announce();
@@ -513,6 +557,7 @@ void check_agent_expiration_time(void)
     }
 }
 
+// Maneja mensajes ANNOUNCE
 void handle_udp_packet(int udp_fd)
 {
     char buffer[BUFFER_MAX_SIZE] = { 0 };
@@ -526,31 +571,31 @@ void handle_udp_packet(int udp_fd)
     if (bytes_read <= 0)
         return;
 
-    // Parse UDP 'ANNOUNCE' message
+    // Parseamos el mensaje 'ANNOUNCE' que llegue
     int len = 0;
     char **fields = split(buffer, " ", &len);
 
-    // Not an ANNOUNCE message...
+    // El mensaje que llegó no es un ANNOUNCE...
     if (!streq(fields[0], "ANNOUNCE"))
         return;
 
     char *ip = inet_ntoa(addr.sin_addr);
     NodeMapCell *node = hashmap_search(state.node_map, &ip);
 
-    // It's the first time the node was announced
-    if (node == NULL){
+    // Si no existe en nuestra tabla de nodos,
+    // lo creamos para luego sumarlo
+    if (node == NULL) {
         node = malloc(sizeof(NodeMapCell));
         node->ip = inet_ntoa(addr.sin_addr);
         node->port = atoi(fields[1]);
         node->socket_fd = -1;
     }
 
-
-    // fields looks like
+    // fields tiene la pinta
     // [ANNOUNCE <port> cpu:<x> mem:<y> gpu:<z>]
     //
-    // So take fields[2] + 4 to only get <x>
-    // Same with mem and gpu
+    // Entonces si quiero el campo de CPU, fields[2] + 4 te da <x>
+    // Misma situación con mem y gpu
     LocalResources resources = {
         atoi(fields[2] + 4),
         atoi(fields[3] + 4),
@@ -564,7 +609,7 @@ void handle_udp_packet(int udp_fd)
     free(fields);
 }
 
-// Closes the epoll instance
+// Cierra la instancia de epoll
 int close_epoll(void)
 {
     if (close(epoll_fd) < 0) {
@@ -575,7 +620,7 @@ int close_epoll(void)
     return OK;
 }
 
-// Closes global sockets
+// Cierra los sockets de escucha y broadcast
 int close_sockets(void)
 {
     if (close(listen_erlang_sock) < 0) {
@@ -596,6 +641,8 @@ int close_sockets(void)
     return OK;
 }
 
+// Limpia los sockets o epoll, según el caso especificado
+// por flags (usando OR)
 int cleanup(int flags)
 {
     if ((flags & 0b1) == CLEAN_SOCKETS)

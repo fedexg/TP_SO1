@@ -4,6 +4,7 @@
 #include "utils.h"
 #include "types.h"
 
+// Aloca memoria para un clon de un NodeMapCell
 NodeMapCell *node_cell_copy(NodeMapCell *nmc)
 {
     int port = nmc->port;
@@ -20,17 +21,20 @@ NodeMapCell *node_cell_copy(NodeMapCell *nmc)
     return cloned;
 }
 
+// Compara dos NodeMapCell por ip
 int node_cell_cmp(NodeMapCell *nmc1, NodeMapCell *nmc2)
 {
     return strcmp(nmc1->ip, nmc2->ip);
 }
 
+// Libera de memoria un NodeMapCell
 void node_cell_free(NodeMapCell *nmc)
 {
     free(nmc->ip);
     free(nmc);
 }
 
+// Calcula K&R hash sobre la IP de un NodeMapCell
 unsigned int node_cell_hash(NodeMapCell *nmp)
 {
     unsigned int h = 0;
@@ -40,6 +44,7 @@ unsigned int node_cell_hash(NodeMapCell *nmp)
     return h;
 }
 
+// Aloca memoria para un clon de un JobMapCell
 JobMapCell *job_cell_copy(JobMapCell *jmc)
 {
     long long job_id = jmc->job_id;
@@ -56,22 +61,26 @@ JobMapCell *job_cell_copy(JobMapCell *jmc)
     return cloned;
 }
 
+// Compara dos JobMapCell por job_id
 int job_cell_cmp(JobMapCell *jmc1, JobMapCell *jmc2)
 {
     return jmc1->job_id - jmc2->job_id;
 }
 
+// Libera de memoria un JobMapCell
 void job_cell_free(JobMapCell* jmc)
 {
     free(jmc->remote_allocations);
     free(jmc);
 }
 
+// Calcula el hash de un JobMapCell segun su job_id
 unsigned int job_cell_hash(JobMapCell *jmc)
 {
     return 8191*jmc->job_id;
 }
 
+// Aloca memoria para un clon de un JobQueueData
 JobQueueData *job_copy(JobQueueData *j)
 {
     int erlang_fd = j->request.erlang_fd;
@@ -91,12 +100,14 @@ JobQueueData *job_copy(JobQueueData *j)
     return cloned;
 }
 
+// Libera de memoria un JobQueueData
 void job_free(JobQueueData *j)
 {
     free(j->request.node_allocations);
     free(j);
 }
 
+// Copia un entero
 int *int_copy(int *x)
 {
     int *p = malloc(sizeof(int));
@@ -104,16 +115,20 @@ int *int_copy(int *x)
     return p;
 }
 
-// Given request fields, serializes it into Request data structure
+// Crea una estructura de tipo Request a partir de un arreglo
+// de strings representando la petición de un agente C
 Request parse_request(char **request_fields, int n_fields)
 {
     Request req;
     char *req_kind = request_fields[0];
+
+    // Determinamos qué tipo de petición se hizo
     if (streq(req_kind, "RESERVE"))
         req.kind = REQUEST_KIND_RESERVE;
     else if (streq(req_kind, "RELEASE"))
         req.kind = REQUEST_KIND_RELEASE;
 
+    // Determinamos qué tipo de recurso se pide
     req.job_id = atoll(request_fields[1]);
     char *resource_name = request_fields[2];
     if (streq(resource_name, "cpu"))
@@ -123,25 +138,14 @@ Request parse_request(char **request_fields, int n_fields)
     else if (streq(resource_name, "gpu"))
         req.res_kind = RES_KIND_GPU;
 
+    // Determinamos cuánto se pidió del tipo de recurso
     req.amount = atoi(request_fields[3]);
 
     return req;
 }
 
-// Allocate memory and copy a request
-Request *request_dup(Request *req)
-{
-    Request *cloned = malloc(sizeof(Request));
-    cloned->job_id = req->job_id;
-    cloned->kind = req->kind;
-    cloned->res_kind = req->res_kind;
-    cloned->amount = req->amount;
-
-    return cloned;
-}
-
-// Parses a request with the form JOB_REQUEST <job_id> [@ip:res:amount ... ]
-// Then, serializes into an ErlangRequest data structure
+// Parsea una petición del tipo JOB_REQUEST <job_id> [@ip:res:amount ... ]
+// para crear un ErlangRequest a partir de la petición
 ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int request_fields_size, int fd)
 {
     ErlangRequest erl = { 0 };
@@ -152,12 +156,13 @@ ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int 
     NodeAllocationInfo *nodes = calloc(cap, sizeof(NodeAllocationInfo));
     int nodes_len = 0;
 
-    // Read starting from the array of nodes
+    // Empezamos desde el arreglo de nodos [@ip:res:amount ... ]
     for (int i = 2; i < request_fields_size; ++i) {
         char **node_information = split(request_fields[i], ":", NULL);
         nodes[nodes_len].ip = strdup(node_information[0] + 1);
 
-        // We use this to get the port of the request
+        // Hacemos esto para obtener el puerto de
+        // a quién se le pide recursos
         NodeMapCell *cached_node = hashmap_search(node_map, &nodes[nodes_len].ip);
         if (cached_node != NULL)
             nodes[nodes_len].port = cached_node->port;
@@ -166,6 +171,7 @@ ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int 
 
         nodes[nodes_len].agent_fd = -1;
 
+        // Determinamos qué tipo de recurso se pide
         if (streq(node_information[1], "cpu")) {
             nodes[nodes_len].res_kind = RES_KIND_CPU;
             nodes[nodes_len].amount = atoi(node_information[2]);
@@ -187,5 +193,7 @@ ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int 
     }
 
     erl.num_allocations = nodes_len;
+    erl.node_allocations = calloc(erl.num_allocations, sizeof(NodeAllocationInfo));
+    memcpy(erl.node_allocations, nodes, erl.num_allocations);
     return erl;
 }

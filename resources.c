@@ -1,6 +1,6 @@
 #include "resources.h"
 
-// Check if there are enough resources requested
+// Determina si hay una cantidad de un recurso dado
 bool exists_resource(LocalResources *res, ResourceKind kind, int amount)
 {
     switch (kind) {
@@ -23,7 +23,7 @@ bool exists_resource(LocalResources *res, ResourceKind kind, int amount)
     return false;
 }
 
-// Decreases a node resource specified by kind by amount
+// Decrementa el recurso de un nodo especificado por tipo y cantidad
 void give_resources(LocalResources *res, ResourceKind kind, int amount)
 {
     switch (kind) {
@@ -41,7 +41,7 @@ void give_resources(LocalResources *res, ResourceKind kind, int amount)
     }
 }
 
-// Increases a node resource specified by kind by amount
+// Incrementa el recurso de un nodo especificado por tipo y cantidad
 void increase_resources(LocalResources *res, ResourceKind kind, int amount)
 {
     switch (kind) {
@@ -59,9 +59,10 @@ void increase_resources(LocalResources *res, ResourceKind kind, int amount)
     }
 }
 
-// Get total resources of all nodes
+// Calcula el total de recursos de todos los nodos
 LocalResources get_initial_resources(Hashmap node_map)
 {
+    // Itera por todos los nodos y suma sus recursos
     LocalResources res = { 0 };
     for (int i = 0; i < node_map->cap; ++i) {
         bool exists_item = node_map->items[i].data != NULL &&

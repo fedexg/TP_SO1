@@ -21,16 +21,18 @@ void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job
                             const char *resource, int amount, int epoll_fd);
 int get_agent_connection(const char *ip, int port, int epoll_fd);
 
-// Handles an erlang client connection
+// Manejar requests (si es posible) proveniente de un cliente Erlang
 void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
 {
     char buffer[BUFFER_MAX_SIZE] = { 0 };
+
+    // Leemos el mensaje que nos envía el cliente Erlang
     ssize_t bytes_read = read(erlang_fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read <= 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
 
-        error("Error intentando leer de un agente de C");
+        error("Error intentando leer de un cliente Erlang");
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, erlang_fd, NULL);
         close(erlang_fd);
     } else {
@@ -40,6 +42,7 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
                                                  request_fields,
                                                  length, erlang_fd);
 
+        // Manejamos el tipo de petición que se nos hizo
         if (streq(request_fields[0], "JOB_REQUEST"))
             handle_job_request(erl, epoll_fd, state);
         else if (streq(request_fields[0], "JOB_RELEASE"))
@@ -48,7 +51,8 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
             handle_job_status(erl, state);
         else if (streq(request_fields[0], "GET_NODES"))
             handle_get_nodes(state->node_map, erl);
-        else {
+        else { // Si no es una petición que conozcamos,
+               // informamos que es desconocida
             char *msg = "Error: comando desconocido";
             send(erlang_fd, msg, strlen(msg), 0);
         }
@@ -57,7 +61,7 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
     }
 }
 
-// Handles an incoming job request from the erlang client
+// Maneja una petición del tipo JOB_REQUEST
 void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
 {
     char msg[BUFFER_MAX_SIZE] = { 0 };
@@ -66,7 +70,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
 
     int cpu = 0, mem = 0, gpu = 0;
 
-    // Gather total resources from request to determine response
+    // Juntamos todos los recursos de la petición antes de mandar una respuesta
     for (int i = 0; i < erl.num_allocations; ++i) {
         NodeAllocationInfo alloc = erl.node_allocations[i];
         if (alloc.res_kind == RES_KIND_CPU)
@@ -77,29 +81,39 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
             gpu += alloc.amount;
     }
 
-    // Total amount of resources exceeds any resource that the
-    // cluster had in the first place. Therefore, job is impossible
-    // and we answer a TIMEOUT
+    // La cantidad total de recursos excede cualquier recurso
+    // que teníamos inicialmente del cluster. Entonces, el job
+    // no se puede hacer y enviamos TIMEOUT
     if (cpu > res.cpu || mem > res.mem || gpu > res.gpu) {
         memset(msg, 0, BUFFER_MAX_SIZE - 1);
         sprintf(msg, "JOB_TIMEOUT %lld", job_id);
+
+        // Sumamos esta petición a la lista de aquellos que recibieron
+        // un TIMEOUT
         state->timed_out_jobs = list_append(state->timed_out_jobs, &job_id,
                                             (ListCpyFunc)int_copy);
         send(erl.erlang_fd, msg, strlen(msg), 0);
         return;
     }
 
-    // Ask agents for what we need
+    // Pedimos a los agentes lo que necesitamos
     RemoteAllocation *remote_allocs = calloc(erl.num_allocations, sizeof(RemoteAllocation));
     int num_granted = 0;
+
+    // Como pueden repetirse IPs en una petición de este tipo,
+    // usamos una lista, pues no se asegura que hayan erl.num_allocations agentes
     List agent_fds = list_make();
 
+    // Necesitamos la IP para no mandarnos
+    // mensajes a nosotros mismos
     char my_ip[64];
     get_local_ip(my_ip, 64);
     LocalResources local = { 0 };
 
     for (int i = 0; i < erl.num_allocations; ++i) {
         NodeAllocationInfo alloc = erl.node_allocations[i];
+
+        // Determinamos a quién hay que enviarle un mensaje
         int agent_fd = alloc.agent_fd;
         if (agent_fd == -1) {
             agent_fd = get_agent_connection(alloc.ip, alloc.port, epoll_fd);
@@ -110,6 +124,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
             }
         }
 
+        // Preparamos el tipo de recurso a pedir
         char msg[BUFFER_MAX_SIZE] = { 0 };
         char resource[4] = { 0 };
 
@@ -120,7 +135,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
         if (alloc.res_kind == RES_KIND_GPU)
             strcpy(resource, "gpu");
 
-        // Let's try not to send a message to ourselves...
+        // Evitamos enviarnos un mensaje a nosotros mismos; simplemente
+        // tomamos nuestros propios recursos, y lo consideramos GRANTED
         if (streq(alloc.ip, my_ip)) {
             if (exists_resource(&state->node_resources, alloc.res_kind, alloc.amount)) {
                 give_resources(&state->node_resources, alloc.res_kind, alloc.amount);
@@ -128,13 +144,16 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
                 ++num_granted;
             }
         } else {
-            // Send RESERVE message based on what we found
+            // Avisamos a otro agente C que queremos reservar un recurso
             sprintf(msg, "RESERVE %lld %s %d", job_id, resource, alloc.amount);
             send(agent_fd, msg, strlen(msg), 0);
 
-            // Count how many GRANTEDs we received
+            // Contamos la cantidad de GRANTEDs que recibimos de parte del agente C
             char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
             recv(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1, 0);
+
+            // Con saber que recibimos GRANTED podemos guardar los recursos;
+            // no necesitamos el job_id en este caso
             if (strncmp(recv_buffer, "GRANTED", 7) == 0) {
                 strcpy(remote_allocs[num_granted].ip, alloc.ip);
                 remote_allocs[num_granted].port = alloc.port;
@@ -151,6 +170,9 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
         }
     }
 
+    // Recibimos menos GRANTEDs de los que necesitamos,
+    // entonces negamos el trabajo y liberamos los recursos
+    // de jobs que se aceptaron
     if (num_granted < erl.num_allocations) {
         memset(msg, 0, BUFFER_MAX_SIZE - 1);
         sprintf(msg, "JOB_DENIED %lld", job_id);
@@ -177,6 +199,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
         return;
     }
 
+    // Creamos el job y lo insertamos en la tabla de jobs activos
     JobMapCell *cell = calloc(1, sizeof(JobMapCell));
     cell->job_id = job_id;
     cell->num_remotely_allocated = erl.num_allocations;
@@ -190,11 +213,13 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
     send(erl.erlang_fd, msg, strlen(msg), 0);
 }
 
-// Handles an incoming job release from the erlang client
+// Maneja una petición del tipo JOB_RELEASE
 void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
 {
     long long job_id = erl.job_id;
     JobMapCell *cell = hashmap_search(state->job_map, &job_id);
+
+    // No encontramos un trabajo con este id, informarlo al cliente
     if (cell == NULL) {
         char error_buf[1024] = { 0 };
         sprintf(error_buf, "Error: no existe el job con id %lld", job_id);
@@ -202,6 +227,7 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
         return;
     }
 
+    // Devolvemos los recursos al nodo que los dio
     increase_resources(&state->node_resources, RES_KIND_CPU,
                        cell->granted_resources.current_cpu);
     increase_resources(&state->node_resources, RES_KIND_MEM,
@@ -209,7 +235,8 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
     increase_resources(&state->node_resources, RES_KIND_GPU,
                        cell->granted_resources.current_gpu);
 
-    // Iterate over remotely allocated resources
+    // Iteramos por cada recurso alocado, y le avisamos al agente
+    // correspondiente que se libera cada recurso que dio
     for (int i = 0; i < cell->num_remotely_allocated; i++) {
         RemoteAllocation remote = cell->remote_allocations[i];
         if (remote.resources.current_cpu > 0)
@@ -226,16 +253,29 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
                                   epoll_fd);
     }
 
+    // Eliminamos el job de la tabla de jobs activos
     free(cell->remote_allocations);
     hashmap_delete(state->job_map, &job_id);
 }
 
-// Handles an incoming job status from the erlang client
+// Maneja una petición del tipo JOB_STATUS
 void handle_job_status(ErlangRequest erl, AgentState *state)
 {
     long long job_id = erl.job_id;
     JobMapCell *job = hashmap_search(state->job_map, &job_id);
     char buffer[BUFFER_MAX_SIZE] = { 0 };
+
+    // Si el job no existe, se le informa al cliente de Erlang
+
+    // Si el job existe, le informamos al cliente de Erlang que
+    // fue dado. De lo contrario, si está en la cola es porque
+    // fue negado. Si no, está en la lista de jobs que recibió
+    // un TIMEOUT
+
+    if (job == NULL) {
+        memset(buffer, 0, BUFFER_MAX_SIZE - 1);
+        sprintf(buffer, "Error: no existe un job con id %lld", job_id);
+    }
 
     if (job != NULL) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
@@ -249,10 +289,11 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
         delete_from_timed_out_jobs(state->timed_out_jobs, job_id);
     }
 
+    // Enviamos el mensaje al cliente de Erlang que nos preguntó
     send(erl.erlang_fd, buffer, strlen(buffer), 0);
 }
 
-// Given a queue of jobs, determines if there's a job with a given id
+// Determina si id está en queue
 bool find_in_queue(Queue queue, int id)
 {
     for (QueueNode* actual_node = queue; actual_node != NULL; actual_node = actual_node->next) {
@@ -264,7 +305,7 @@ bool find_in_queue(Queue queue, int id)
     return false;
 }
 
-// Given a list of job ids, determines if there's a id is in the list
+// Determina si id está en list
 bool find_in_list(List list, int id)
 {
     for (ListNode *actual_node = list; actual_node != NULL; actual_node = actual_node->next) {
@@ -276,7 +317,7 @@ bool find_in_list(List list, int id)
     return false;
 }
 
-// Delete a job with given id from timed out jobs list
+// Elimina un job que recibió un TIMEOUT con id 'id'
 void delete_from_timed_out_jobs(List timed_out_jobs, int id)
 {
     ListNode *node_before = timed_out_jobs;
@@ -296,14 +337,16 @@ void delete_from_timed_out_jobs(List timed_out_jobs, int id)
     }
 }
 
-// Handles an incoming get nodes from the erlang client
+// Maneja una petición del tipo GET_NODES
 void handle_get_nodes(Hashmap node_map, ErlangRequest erl)
 {
-    // Format: NODES IP:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3;IP:PORT:cpu:NUM4:mem:NUM5:gpu:NUM6; ...
+    // Formato: NODES IP:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3;IP:PORT:cpu:NUM4:mem:NUM5:gpu:NUM6; ...
     int buffer_cap = 1024;
     char *buffer = calloc(buffer_cap, sizeof(char));
     strcpy(buffer, "NODES ");
 
+    // Buscamos entre los nodos en nuestra tabla, y si hay uno,
+    // sumamos su información al mensaje que vamos a enviar
     for (int i = 0; i < node_map->cap; ++i) {
         bool exists_item = node_map->items[i].data != NULL &&
                             !node_map->items[i].deleted;
@@ -317,45 +360,51 @@ void handle_get_nodes(Hashmap node_map, ErlangRequest erl)
                      node->resources.mem,
                      node->resources.gpu);
 
-            // If the new string won't fit, grow the buffer dynamically
+            // Si el string que creamos no tiene suficiente tamaño, lo expandimos
             while (strlen(buffer) + strlen(node_buffer) >= buffer_cap) {
                 buffer_cap *= 2;
                 char *new_buffer = realloc(buffer, buffer_cap);
                 buffer = new_buffer;
             }
 
-            // Append what we wrote to the result buffer
+            // Sumamos lo que escribimos al resultado final
             strcat(buffer, node_buffer);
         }
     }
 
+    // Enviamos la información de todos los nodos en el cluster
+    // y liberamos el mensaje
     send(erl.erlang_fd, buffer, strlen(buffer), 0);
     free(buffer);
 }
 
-// Sends a RELEASE message to the C agent specified
+// Envia un RELEASE al agente especificado por ip
 void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job_id,
                             const char *resource, int amount, int epoll_fd)
 {
     NodeMapCell *target_node = hashmap_search(node_map, &agent_ip);
 
-    // This node is not in the cluster, so we're done
+    // El nodo no está en el cluster, así que no hacemos nada
     if (target_node == NULL)
         return;
 
+    // Intentamos buscar su descriptor de archivo para enviar el mensaje
     int fd = get_agent_connection(target_node->ip, target_node->port, epoll_fd);
     if (fd == -1) {
         error("Error intentando conectarse a un nodo");
         return;
     }
 
-    // We won't close fd because we want to keep it alive in the epoll instance
+    // Preparamos y enviamos el mensaje
     char release_msg[BUFFER_MAX_SIZE];
     snprintf(release_msg, sizeof(release_msg), "RELEASE %lld %s %d", job_id, resource, amount);
     send(fd, release_msg, strlen(release_msg), 0);
+
+    // ¡No cerramos fd para que se quede en la instancia de epoll!
 }
 
-// Get file descriptor of agent which we need to send messages to
+// Encuentra el descriptor de archivo del socket
+// especificado por ip y puerto
 int get_agent_connection(const char *ip, int port, int epoll_fd)
 {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -364,7 +413,7 @@ int get_agent_connection(const char *ip, int port, int epoll_fd)
 
     set_socket_nonblocking(sock);
 
-    // Set up socket and get address information
+    // Guardamos la información del socket
     struct sockaddr_in agent_addr;
     memset(&agent_addr, 0, sizeof(agent_addr));
     agent_addr.sin_family = AF_INET;
@@ -372,15 +421,16 @@ int get_agent_connection(const char *ip, int port, int epoll_fd)
 
     inet_pton(AF_INET, ip, &agent_addr.sin_addr);
 
-    // We check if errno is EINPROGRESS because sock is non-blocking.
+    // Chequeamos que errno sea EINPROGRESS porque sock es no bloqueante
     int res = connect(sock, (struct sockaddr *)&agent_addr, sizeof(agent_addr));
     if (res < 0 && errno != EINPROGRESS) {
         close(sock);
         return FAIL;
     }
 
-    // Add to epoll instance to listen for events
-    if (add_descriptor(epoll_fd, sock) < 0) {
+    // Lo sumamos a la instancia de epoll para registrar eventos
+    // provenientes de este socket
+    if (add_descriptor(epoll_fd, sock, NULL) < 0) {
         close(sock);
         return FAIL;
     }

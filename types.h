@@ -8,7 +8,7 @@
 #include "ds/queue.h"
 #include "ds/list.h"
 
-// Local node resources
+// Recursos de un nodo
 typedef struct _LocalResources {
     int current_cpu;
     int current_mem;
@@ -19,14 +19,14 @@ typedef struct _LocalResources {
     int gpu;
 } LocalResources;
 
-// Represents the allocated resources in a remote node
+// Guarda los recursos alocados en un nodo remoto
 typedef struct _RemoteAllocation {
     char ip[16];
     int port;
     LocalResources resources;
 } RemoteAllocation;
 
-// Cell of node_map
+// Elemento de la tabla de nodos
 typedef struct _NodeMapCell {
     char *ip;
     int port;
@@ -35,15 +35,15 @@ typedef struct _NodeMapCell {
     time_t time_when_called;
 } NodeMapCell;
 
-// Cell of job_map 
+// Elemento de la tabla de jobs activos
 typedef struct _JobMapCell {
     long long job_id;
     int num_remotely_allocated;
-    RemoteAllocation *remote_allocations; // array of all the remotely allocated resources
+    RemoteAllocation *remote_allocations; // arreglo con todos los recursos alocados
     LocalResources granted_resources;
 } JobMapCell;
 
-// Represents C agent request
+// Guarda datos de una petición hecha por un agente C
 typedef struct _Request {
     long long job_id;
     RequestKind kind;
@@ -51,42 +51,43 @@ typedef struct _Request {
     int amount;
 } Request;
 
-// Represents a single node inside an Erlang request
+// Guarda la información de un nodo en una petición hecha
+// por el cliente Erlang
 typedef struct _NodeAllocationInfo {
     char *ip;
     int port;
-    int agent_fd;  // Stores the connection to the C agent
+    int agent_fd;  // Guarda la conexión con el agente C
     ResourceKind res_kind;
     int amount;
 } NodeAllocationInfo;
 
-// Represents an Erlang request
+// Guarda datos de una petición hecha por un cliente Erlang
 typedef struct _ErlangRequest {
-    int erlang_fd;  // Stores the connection to the Erlang planner
+    int erlang_fd;  // Guarda la conexión con el planificador de Erlang
     long long job_id;
     NodeAllocationInfo *node_allocations;
     int num_allocations;
 } ErlangRequest;
 
-// The data element of job_queue
+// Elemento de la cola de jobs en espera
 typedef struct JobQueueData {
     ErlangRequest request;
     time_t time_when_alloc;
 } JobQueueData;
 
-// Pair of mutex and condition variable
+// Par con un mutex y una variable de condición
 typedef struct MutexCond {
     pthread_mutex_t mutex;
     pthread_cond_t nonempty_queue_cond;
 } MutexCond;
 
-// Structure that holds the global state of the program
+// Guarda el estado global del agente
 typedef struct AgentState {
     LocalResources node_resources;
     Hashmap node_map, job_map;
     Queue job_queue;
     List timed_out_jobs;
-    MutexCond protection; // We use this to manipulate job_queue atomically
+    MutexCond protection; // Usamos esto para manipular job_queue atomicamente
 } AgentState;
 
 NodeMapCell *node_cell_copy(NodeMapCell *nmp);
@@ -101,7 +102,6 @@ JobQueueData *job_copy(JobQueueData *j);
 void job_free(JobQueueData *j);
 int *int_copy(int *x);
 Request parse_request(char **request_fields, int n_fields);
-Request *request_dup(Request *req);
 void request_free(Request *req);
 ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields,
                                    int request_fields_size, int fd);

@@ -11,13 +11,14 @@
 #include "const.h"
 #include "utils.h"
 
-// Prints error message alongside the error
+// Imprime msg junto a un error de mensaje
+// determinado por errno
 void error(const char *msg)
 {
     printf("%s: %s\n", msg, strerror(errno));
 }
 
-// Stores own IP address in ip_buffer
+// Guarda tu IP en ip_buffer
 int get_local_ip(char *ip_buffer, int buffer_size)
 {
     struct ifaddrs *interfaces = NULL;
@@ -45,7 +46,7 @@ int get_local_ip(char *ip_buffer, int buffer_size)
     return OK;
 }
 
-// Sets non-blocking flag to socket 'sock'
+// Hace a sock no bloqueante con O_NONBLOCK
 // https://stackoverflow.com/a/73879155
 int set_socket_nonblocking(int sock)
 {
@@ -57,7 +58,7 @@ int set_socket_nonblocking(int sock)
     return fcntl(sock, F_SETFL, flags);
 }
 
-// Stores text fields separated by delimiter in array
+// Separa text en multiples strings determinadas por delimiter
 char **split(char *text, char *delimiter, int *len)
 {
     int cap = 32;
@@ -77,13 +78,16 @@ char **split(char *text, char *delimiter, int *len)
     return result;
 }
 
-// Adds the corresponding file descriptor to the epoll instance
-int add_descriptor(int epoll_fd, int fd)
+// Añade fd a la instancia de epoll
+int add_descriptor(int epoll_fd, int fd, struct epoll_event *ev)
 {
-    struct epoll_event ev;
-    ev.events = EPOLLIN;
-    ev.data.fd = fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
+    struct epoll_event evv;
+    evv.events = EPOLLIN;
+    evv.data.fd = fd;
+    if (ev == NULL)
+        ev = &evv;
+
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, ev) < 0) {
         error("Error intentando añadir el socket a la instancia de epoll");
         return FAIL;
     }
