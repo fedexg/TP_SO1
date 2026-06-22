@@ -141,6 +141,8 @@ int main(int argc, char **argv)
     return 0;
 }
 
+// Revisa regularmente la cola y si no está vacía,
+// maneja el request encolado en job_queue
 void *worker_thread_handler(void *arg)
 {
     while (true) {
@@ -161,6 +163,10 @@ void *worker_thread_handler(void *arg)
     return NULL;
 }
 
+// Revisa regularmente la cola, y si un job fue encolado
+// por más de 15 segundos, es eliminado (pues ayuda a prevenir
+// deadlocks) y se le informa al cliente de Erlang adecuado
+// de un TIMEOUT
 void *checker_thread_handler(void *arg)
 {
     while (true) {
