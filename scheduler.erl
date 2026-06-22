@@ -131,7 +131,7 @@ job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
                                     send_to_agent(Socket, status, hd(Job_Id)); 
         ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
                                     maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! invalid_job;
-        Any -> io:fwrite("Command error: ~p~n", [Any]),
+        Any -> io:fwrite("Command error: ~p~n", [Any])
     end.
 % %
 
