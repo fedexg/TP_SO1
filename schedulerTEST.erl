@@ -22,7 +22,6 @@ not_agent_loop(Map_Of_JOBs) ->
             List_Of_Rand_Nodes = make_rand_nodes(rand:uniform(10)),
                                 % Esto devuelve algo tipo ["192.168.1.10:8100:cpu:4:mem:8192:gpu:1","192.168.1.11:8101:cpu:2:mem:4096:gpu:0",N-veces]
             String_responce = "NODES " ++ string:join(List_Of_Rand_Nodes,";"),
-            io:fwrite("TESTER :: Generé: ~s ~n", [String_responce]),
             Pid_To_Answer ! {get_nodes, String_responce},
             not_agent_loop(Map_Of_JOBs);
 
@@ -30,11 +29,9 @@ not_agent_loop(Map_Of_JOBs) ->
             Data_Splited = string:tokens(STRING, " "),
             Pid_To_Answer = list_to_pid(lists:nth(1, Data_Splited)),
             Job_Id = lists:nth(2, Data_Splited),
-            io:fwrite("TESTER :: JOB_REQUEST, Job_Id: ~p~n",[Job_Id]),
             case io:get_line("TESTER :: 1: Enviar un 'JOB_GRANTED' al scheduler\nTESTER :: 2: Enviar un 'JOB_DENIED' al scheduler\nTESTER :: ") of 
                 "1\n" -> 
-                    Pid_To_Answer ! {ok, "JOB_GRANTED " ++ Job_Id}, %JOB_GRATED 12
-                    io:fwrite("El job id es algo asi: ~p~n",[list_to_integer(Job_Id)]),
+                    Pid_To_Answer ! {ok, "JOB_GRANTED " ++ Job_Id}, 
                     not_agent_loop(maps:put(list_to_integer(Job_Id), granted, Map_Of_JOBs));
                 "2\n" ->
                     Pid_To_Answer ! {ok, "JOB_DENIED " ++ Job_Id},
@@ -48,22 +45,23 @@ not_agent_loop(Map_Of_JOBs) ->
             case io:get_line("TESTER :: 1: Enviar un 'JOB_GRANTED' al scheduler\nTESTER :: 2: Enviar un 'JOB_DENIED' al scheduler\nTESTER :: 3: Enviar un 'JOB_TIMEOUT' al scheduler\nTESTER ::") of 
                 "1\n" -> 
                     Pid_To_Answer ! {ok, "JOB_GRANTED " ++ Job_Id}, %JOB_GRATED 12
-                    not_agent_loop(maps:put(Job_Id, granted, Map_Of_JOBs));
+                    not_agent_loop(maps:put(list_to_integer(Job_Id), granted, Map_Of_JOBs));
                 "2\n" ->
                     Pid_To_Answer ! {ok, "JOB_DENIED " ++ Job_Id},
-                    not_agent_loop(maps:put(Job_Id, denied, Map_Of_JOBs));
+                    not_agent_loop(maps:put(list_to_integer(Job_Id), denied, Map_Of_JOBs));
                 "3\n" ->
                     Pid_To_Answer ! {ok, "JOB_TIMEOUT " ++ Job_Id},
-                    not_agent_loop(maps:remove(Job_Id, Map_Of_JOBs))
+                    not_agent_loop(maps:remove(list_to_integer(Job_Id), Map_Of_JOBs))
             end;
         
         "JOB_RELEASE " ++ STRING -> %JOB_RELEASE <PID> Job_Id
-            io:fwrite("~s~n", [STRING]),
             Data_Splited = string:tokens(STRING, " "),
             Job_Id = lists:nth(2, Data_Splited),
-            case maps:find(Job_Id, Map_Of_JOBs) of
+            List_Of_JOBs = maps:to_list(Map_Of_JOBs),
+            lists:foreach(fun(A)-> io:fwrite("TESTERER :: ~p~n", [A]) end, List_Of_JOBs),
+            case maps:find(list_to_integer(Job_Id), Map_Of_JOBs) of
                 {ok, granted} ->
-                    not_agent_loop(maps:remove(Job_Id, Map_Of_JOBs));
+                    not_agent_loop(maps:remove(list_to_integer(Job_Id), Map_Of_JOBs));
                 {ok, denied} ->
                     io:fwrite("TESTER :: ERROR, Quiere liberar un JOB denegado!~n"),
                     not_agent_loop(Map_Of_JOBs);
@@ -110,7 +108,7 @@ start_scheduler() ->
 % %
 scheduler_loop(Not_Socket, Job_Queue, Client_Map, N) ->
     Nodes_Info = request_nodes_info(Not_Socket),            % <- Cada nuevo loop, le pregunta al Agente C que opciones tiene para otorgar a los clientes. 
-    io:fwrite("~p~n",[Nodes_Info]),
+    io:fwrite("TESTER :: Generé: ~p  ~n", [Nodes_Info]),
     case queue:is_empty(Job_Queue) of                   % (En mi opinion) capaz un poco excesivo, podría hacerlo una vez cada N tiempo
         % La cola de JOBS tiene elementos: atiende el JOB que desencola. 
         false -> 
@@ -125,14 +123,13 @@ scheduler_loop(Not_Socket, Job_Queue, Client_Map, N) ->
     end,
     receive
         {new_job, Client_Id, Job_Info_Recv} -> 
-            io:fwrite("DANTEEEEE ~p~n", [Job_Info_Recv]),
             Neew_Job_Queue = queue:in({N, Job_Info_Recv},Job_Queue),     % <- Encola el JOB con su id unico.
             Neew_Client_Map = maps:put(N, Client_Id, Client_Map),        % <- Agrega en el diccionario el JOB asignado al cliente.
             Client_Id ! {given_jobid, N},                               % <- Confirma al cliente el almacenamiento de su pedido a la cola.  
             scheduler_loop(Not_Socket, Neew_Job_Queue, Neew_Client_Map, N+1); 
 
         {job_finished, Old_Job_Id} ->
-            send_to_agent(Not_Socket, release, Old_Job_Id),                   
+            send_to_agent(Not_Socket, release, integer_to_list(Old_Job_Id)),                   
             scheduler_loop(Not_Socket, Job_Queue, Client_Map, N);
 
         _ -> 
@@ -159,7 +156,6 @@ request_nodes_info(Not_Socket) ->
     end.
 % %
 parse_node_info(Data) ->
-    io:fwrite("Tengo que parcear esto: ~s~n",[Data]),
     case string:split(Data," ") of
         ["NODES", String_Nodes] -> List_Nodes = string:tokens(String_Nodes, ";"), 
                                     manage_nodes_info(List_Nodes); 
@@ -170,7 +166,6 @@ manage_nodes_info(List_Nodes) ->
     Max_CPU = lists:foldl(fun(L,Acum) -> fold_node_data(L, Acum, 4) end, 0, List_Nodes),
     Max_MEM = lists:foldl(fun(L,Acum) -> fold_node_data(L, Acum, 6) end, 0, List_Nodes),
     Max_GPU = lists:foldl(fun(L,Acum) -> fold_node_data(L, Acum, 8) end, 0, List_Nodes),
-    io:format("DEBUG: Valores calculados -> CPU:~p, MEM:~p, GPU:~p~n", [Max_CPU, Max_MEM, Max_GPU]),
     {Max_CPU, Max_MEM, Max_GPU, List_Nodes}. 
 % %
 fold_node_data(L, Acum, Data_Index) ->
@@ -197,14 +192,14 @@ fold_node_data(L, Acum, Data_Index) ->
 job_request_inbox(Not_Socket) ->
     receive  
         {ok, Data} ->
-            case string:tokens(Data, " ") of
-                ["JOB_GRANTED" | _] -> valid_job; % FALTA COMPROBAR QUE SEA UN GRANTED RESPECTIVO AL JOB DE ID Job_Id
+            case string:split(Data, " ") of
+                ["JOB_GRANTED" | _Job_Id] -> valid_job; % FALTA COMPROBAR QUE SEA UN GRANTED RESPECTIVO AL JOB DE ID Job_Id
 
                 ["JOB_DENIED" | Job_Id] -> io:fwrite("Job is on the queue by the C agent~n"),
                                             timer:sleep(5000),
-                                            send_to_agent(Not_Socket, status, Job_Id); % El agente envia y recibe mensajes crudos.
-                
-                ["JOB_TIMEOUT" | _] -> io:fwrite("Job was timeouted by the C agent~n"),
+                                            send_to_agent(Not_Socket, status, hd(Job_Id)); % El agente envia y recibe mensajes crudos.
+                                                                            %   |    IMPORTANTE, Job_Id es originalmente una lista de una string, por eso el hd/1.
+                ["JOB_TIMEOUT" | _Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
                                        invalid_job;
 
                 Any -> io:fwrite("Command error: ~p~n", [Any]),
@@ -220,7 +215,7 @@ send_to_agent(Not_Socket, Message_Type, INFO) ->
                    job_request_inbox(Not_Socket);
         status ->  Not_Socket ! "JOB_STATUS "++pid_to_list(self())++" "++INFO,  %JOB_STATUS <PID> Job_Id
                    job_request_inbox(Not_Socket);
-        release -> Not_Socket ! "JOB_RELEASE "++pid_to_list(self())++" "++integer_to_list(INFO), %JOB_RELEASE <PID> Job_Id
+        release -> Not_Socket ! "JOB_RELEASE "++pid_to_list(self())++" "++INFO, %JOB_RELEASE <PID> Job_Id
                    timer:sleep(5000)
     end.
 
@@ -243,7 +238,6 @@ send_to_agent(Not_Socket, Message_Type, INFO) ->
 % string_of_ip_request/3: Funcion auxiliar que parsea el resultado final a enviar a Agente C.
 % %
 check_job_valid(Not_Socket, Nodes_Info, Job_Id, Job_Info) ->
-    io:fwrite("check_job_valid:~p~n",[Job_Info]),
     {Max_CPU, Max_MEM, Max_GPU, List_Nodes} = Nodes_Info,
     {CPU, MEM, GPU} = Job_Info,
     if 
@@ -310,7 +304,6 @@ client_simulator(Scheduler) ->
     Scheduler ! {new_job, self(), Job_Info},
     receive
         {given_jobid, Job_Id} -> 
-            io:fwrite("HOLA?~n"),
             do_job(Job_Id, Scheduler),
             client_simulator(Scheduler);
         _ -> client_simulator(Scheduler)
