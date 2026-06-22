@@ -28,10 +28,9 @@ scheduler_loop(Socket, Job_Queue, Client_Map, N, Working_Bool) ->
         % La cola de JOBS tiene elementos: atiende el JOB que desencola. 
         {false, false} -> 
             {{Job_Id, Job_Info}, New_Job_Queue} = queue:out(Job_Queue),             % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
-            spawn(?MODULE, job_handler, [Socket, Nodes_Info, Job_Id, Job_Info, Client_Map])
+            spawn(?MODULE, job_handler, [Socket, Nodes_Info, Job_Id, Job_Info, Client_Map]),
             New_Client_Map = maps:remove(Job_Id, Client_Map),                       % <- Saca el JOB atendido
             scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N, true);               
-              
         _ -> receive
                     {new_job, Client_Id, Job_Info_Recv} -> 
                         New_Job_Queue = queue:in({N, Job_Info_Recv},Job_Queue),     % <- Encola el JOB con su id unico.
