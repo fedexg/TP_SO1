@@ -1,8 +1,8 @@
 # Trabajo práctico Sistemas Operativos I
 
-## Compilar el agente
+## Compilar el agente de C
 ```
-$ make agente
+$ make
 ```
 
 ## Limpiar archivos

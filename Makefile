@@ -1,12 +1,38 @@
 CC=gcc
-C_OBJ=agente.o
+C_SRC=main.c utils.c types.c resources.c erl.c agents.c \
+	  ds/hashmap.c ds/queue.c ds/list.c
+C_OBJ=$(C_SRC:.c=.o)
 C_OUT=agente
-CFLAGS=-Wall -Werror
+CFLAGS=-Wall -Werror -pthread
 
-agente: agente.o
-	$(CC) -o $(C_OUT) $(C_OBJ) $(CFLAGS)
+default: $(C_OBJ)
+	$(CC) -o $(C_OUT) $(CFLAGS) $(C_OBJ)
 
-agente.o: agente.c
+main.o: main.c
+	$(CC) -c $^ $(CFLAGS)
+
+ds/hashmap.o: ds/hashmap.c
+	$(CC) -c $^ $(CFLAGS) -o ds/hashmap.o
+
+ds/queue.o: ds/queue.c
+	$(CC) -c $^ $(CFLAGS) -o ds/queue.o
+
+ds/list.o: ds/list.c
+	$(CC) -c $^ $(CFLAGS) -o ds/list.o
+
+utils.o: utils.c
+	$(CC) -c $^ $(CFLAGS)
+
+types.o: types.c
+	$(CC) -c $^ $(CFLAGS)
+
+resources.o: resources.c
+	$(CC) -c $^ $(CFLAGS)
+
+erl.o: erl.c
+	$(CC) -c $^ $(CFLAGS)
+
+agents.o: agents.c
 	$(CC) -c $^ $(CFLAGS)
 
 clean:
