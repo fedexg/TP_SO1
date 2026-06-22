@@ -153,9 +153,12 @@ void *checker_thread_handler(void *arg)
         for (QueueNode *p = job_queue; p != NULL; p = p->next) {
             QueueNode *next = p->next;
             JobQueueData *job = (JobQueueData *)p->data;
-            if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE)
+            if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE){
+                char msg[BUFFER_MAX_SIZE] = { 0 };
+                sprintf(msg,"JOB_TIMEOUT %lld",job->request.job_id);
+                send(job->request.erlang_fd,msg,strlen(msg),0);
                 delete_from_job_queue(job);
-
+            }
             // We do this to prevent a potential use after free
             p = next;
         }
