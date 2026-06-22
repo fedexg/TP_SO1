@@ -51,3 +51,49 @@ Si tenes unas situacion donde dos nodos necesitan recursos del otro mutuamente, 
 solucionar ésta situacion de deadlock. La solucion mas facil y recomendada, es la de un time_out, la cual
 plantea que si un job en proceso de iniciar, no logra comenzar un tiempo determinado, este termina cancelado o
 aplazado para mas tarde devolviendolo a la cola. 
+
+ EN LA FUNCION SCHDULER_LOOP:
+ Hace uso de sus argumentos de la siguiente forma: 
+ Socket : Comunica el Scheduler con el Agente C tomando un rol de "cliente" con él.
+ Job_Queue : El Sch. hace uso de una cola para ordenar los trabajos (diremos JOBS) pedidos por clientes.
+ Client_Map : El Sch. hace uso de un diccionario para acceder al cliente que pidió un determinado JOB de la Cola de JOBS.
+ N : Un numero arbitrario unico para identificar los JOBS. 
+ 
+ Nodes_Info es: {Max_CPU, Max_MEM, Max_GPU, List_Nodes}
+       Donde Max_Nodes_<RESOURSE_TYPE> es: Un entero que representa el 
+       valor maximo valido, de ese recurso, para pedir al Agente C.
+       Donde List_Nodes es: Una lista de Nodos.
+           Un Nodo es: "IP:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3"
+               IP y PORT son la ip en la red en la que el nodo está alocado y el puerto donde se encuentra el socket de escucha, respectivamente.
+               <RESOURSE_TYPE>:NUMi es la respectiva cantidad de recursos que tiene el Nodo.
+ %
+ Una Job_Queue es: una cola de Job%
+   Un Job es: {Job_Id, Job_Info} 
+       Donde Job_Id es: Un numero unico para identificar un JOB del resto
+       Donde Job_Info es: {CPU_NUM, MEM_NUM, GPU_NUM}                             
+           Donde <RESOURSE_TYPE>_NUM es un entero que reprecenta la cantidad de un recurso que quiere el cliente.
+ %
+ Una Client_Map es: un diccionario de Pids de Clientes identificados por Job_Id
+   Un Cliente es: Un proceso que solicita JOBs (recursos para trabajar).
+
+%% <esto es de fede creo...> 
+% Erlang tiene: Scheduler y Un/os cliente/s
+% Los clientes le piden al scheduler que quieren (le tiran cuantos recursos quieren) hacer una tarea
+% Scheduler le pide los recursos a C
+%  
+% El/los cliente/s puede/n representarse como un Proceso que genera "jobs" aleatorios
+% Con una cantidad de costos aleatorios
+% El scheduler decide como repartir los recursos para los jobs
+% Los jobs pueden guardarse en una QUEUE
+% 
+% La comunicacion erlang <--> C, depende del grupo 
+%
+% Con un Job cada cierto tiempo alcanza para lo que pide el tp
+% 
+% El deadlock lo mejor es liberarlo cuando se toma mucho tiempo (consultar con la gente)
+%
+% El puerto puede ser el mismo que el de Broadcast
+% C debe determinar si el mensaje vino de erlang u otro agente C
+
+% Guardar Clientes en un mapa que sea Key:Job_ID, Data:proces_Id
+% Guardar en la Queue {Job_Id, Request}

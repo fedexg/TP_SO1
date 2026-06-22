@@ -2,6 +2,7 @@
 -export([start/0]).
 
 -export([start_scheduler/0]).
+-define(PORT,1337).
 
 % Inicia el iniciador del Scheduler y el simulador de cliente 
 % %
@@ -14,7 +15,7 @@ start() ->
 % local conectado al Agente C. Ademas procede a iniciar el scheluder
 % %
 start_scheduler() ->
-    {ok, Socket} = gen_tcp:connect("localhost",1337),
+    {ok, Socket} = gen_tcp:connect("localhost",?PORT),
     scheduler_loop(Socket, queue:new(), maps:new(), 1000).
 % %
 
@@ -26,18 +27,18 @@ scheduler_loop(Socket, Job_Queue, Client_Map, N) ->
     case queue:is_empty(Job_Queue) of                   
         % La cola de JOBS tiene elementos: atiende el JOB que desencola. 
         false -> 
-            {{Job_Id, Job_Info}, New_Job_Queue} = queue:out(Job_Queue),             % La cola guarda tuplas de la forma {ID,INFO}, JOBs
-            Msg_to_client = check_job_valid(Socket, Nodes_Info, Job_Id, Job_Info),  % Valida el mensaje a enviar al cliente.
-            maps:get(Job_Id, Client_Map) ! Msg_to_client,                           % Le envia al cliente un mensaje MSG: IP:PORT:? 
-            New_Client_Map = maps:remove(Job_Id, Client_Map),                       % Saca el JOB atendido
-            scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N);               % LOOP!
+            {{Job_Id, Job_Info}, New_Job_Queue} = queue:out(Job_Queue),             % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
+            Msg_to_client = check_job_valid(Socket, Nodes_Info, Job_Id, Job_Info),  % <- devuelve un mensaje para que el cliente sepa si su trabajo fue atendido con exito.
+            maps:get(Job_Id, Client_Map) ! Msg_to_client,                           % ¡IMPORTANTE! Durante ésta funcion, el Agente C recibe el pedido y el scheduler queda en escucha.
+            New_Client_Map = maps:remove(Job_Id, Client_Map),                       % <- Saca el JOB atendido
+            scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N);               
               
         true -> receive
                     {new_job, Client_Id, Job_Info_Recv} -> 
-                        New_Job_Queue = queue:in({N, Job_Info_Recv},Job_Queue),     % Encola el JOB con su id unico.
-                        New_Client_Map = maps:add(N, Client_Id, Client_Map),        % Agrega en el diccionario el JOB asignado al cliente.
-                        Client_Id ! {given_jobid, N},                               % Confirma al cliente el almacenamiento de su pedido a la cola.  
-                        scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N+1); % LOOP!
+                        New_Job_Queue = queue:in({N, Job_Info_Recv},Job_Queue),     % <- Encola el JOB con su id unico.
+                        New_Client_Map = maps:add(N, Client_Id, Client_Map),        % <- Agrega en el diccionario el JOB asignado al cliente.
+                        Client_Id ! {given_jobid, N},                               % <- Confirma al cliente el almacenamiento de su pedido a la cola.  
+                        scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N+1); 
 
                     {job_finished, Job_Id} ->
                         send_to_agent(Socket, release, Job_Id),                   
@@ -103,12 +104,12 @@ fold_node_data(L, Acum, Data_Index) ->
 job_request_inbox(Socket) ->
     Data = gen_tcp:recv(Socket, 0),  %<- Espera a que responda el Agente C
     case string:split(Data, " ") of
-        ["JOB_GRANTED" | Job_Id] -> valid_job; % FALTA COMPROBAR QUE SEA UN GRANTED RESPECTIVO AL JOB DE ID Job_Id
+        ["JOB_GRANTED" | Job_Id] -> valid_job; 
         
         ["JOB_DENIED" | Job_Id] -> io:fwrite("Job is on the queue by the C agent~n"),
                                     timer:sleep(5000),
-                                    send_to_agent(Socket, status, Job_Id);
-        
+                                    send_to_agent(Socket, status, Job_Id); 
+
         ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
                                     invalid_job;
 
@@ -123,11 +124,11 @@ job_request_inbox(Socket) ->
 send_to_agent(Socket, Message_Type, INFO) ->
     case Message_Type of
         request -> gen_tcp:send(Socket, "JOB_REQUEST "++INFO),
-                    job_request_inbox(Socket);
-        status -> gen_tcp:send(Socket, "JOB_STATUS "++INFO),
-                    job_request_inbox(Socket);
+                   job_request_inbox(Socket);
+        status ->  gen_tcp:send(Socket, "JOB_STATUS "++INFO),
+                   job_request_inbox(Socket);
         release -> gen_tcp:send(Socket, "JOB_RELEASE "++INFO),
-                    timer:sleep(5000)
+                   timer:sleep(5000)
     end.
 % %
 
