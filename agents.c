@@ -15,12 +15,7 @@
 void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
                                      LocalResources *node_resources, int fd);
 
-void handle_c_agent(int c_agent_fd,
-                    Hashmap node_map, Hashmap job_map,
-                    Queue job_queue, List timed_out_jobs,
-                    LocalResources *node_resources,
-                    MutexCond protection,
-                    int epoll_fd)
+void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
 {
     char buffer[BUFFER_MAX_SIZE];
     memset(buffer, 0, BUFFER_MAX_SIZE);
@@ -31,7 +26,8 @@ void handle_c_agent(int c_agent_fd,
 
         error("Error intentando leer de un agente de C");
 
-        handle_unexpected_disconnection(node_map, job_map, node_resources, c_agent_fd);
+        handle_unexpected_disconnection(state->node_map, state->job_map,
+                                        &state->node_resources, c_agent_fd);
 
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c_agent_fd, NULL);
         close(c_agent_fd);
@@ -39,68 +35,59 @@ void handle_c_agent(int c_agent_fd,
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
         Request request = parse_request(request_fields, length);
-        process_request(node_map, job_map,
-                        request, node_resources,
-                        timed_out_jobs, job_queue,
-                        protection,
-                        c_agent_fd, epoll_fd);
+        process_request(c_agent_fd, epoll_fd, request, state);
         free(request_fields);
     }
 }
 
 // Given a request and a file descriptor, processes the agent c request.
-void process_request(Hashmap node_map, Hashmap job_map,
-                     Request req, LocalResources *node_resources,
-                     List timed_out_jobs, Queue job_queue,
-                     MutexCond protection,
-                     int fd, int epoll_fd)
+void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *state)
 {
     char response_to_agent[128] = {0};
     switch (req.kind) {
     case REQUEST_KIND_RESERVE:
-        if (exists_resource(node_resources, req.res_kind, req.amount)) {
-            JobMapCell *cell = hashmap_search(job_map, &req.job_id);
+        if (exists_resource(&state->node_resources, req.res_kind, req.amount)) {
+            JobMapCell *cell = hashmap_search(state->job_map, &req.job_id);
 
             // We didn't find a cell with this job id. We create it.
             if (cell == NULL)
                 cell = calloc(1, sizeof(JobMapCell));
 
-            increase_resources(&(cell->granted_resources), req.res_kind, req.amount);
-            hashmap_put(job_map, &cell);
-            give_resources(node_resources, req.res_kind, req.amount);
+            increase_resources(&cell->granted_resources, req.res_kind, req.amount);
+            hashmap_put(state->job_map, &cell);
+            give_resources(&state->node_resources, req.res_kind, req.amount);
             sprintf(response_to_agent, "GRANTED %lld", req.job_id);
-            send(fd, response_to_agent, 8, 0);
+            send(c_agent_fd, response_to_agent, 8, 0);
         } else {
             sprintf(response_to_agent, "DENIED %lld", req.job_id);
-            send(fd, response_to_agent, 8, 0);
+            send(c_agent_fd, response_to_agent, 8, 0);
         }
 
         break;
 
     case REQUEST_KIND_RELEASE:
-        increase_resources(node_resources, req.res_kind, req.amount);
-        JobMapCell *cell = hashmap_search(job_map, &req.job_id);
+        increase_resources(&state->node_resources, req.res_kind, req.amount);
+        JobMapCell *cell = hashmap_search(state->job_map, &req.job_id);
 
         // Cell not found, therefore no job with that id was found.
         if (cell == NULL) {
             sprintf(response_to_agent, "DENIED %lld", req.job_id);
-            send(fd, response_to_agent, 8, 0);
+            send(c_agent_fd, response_to_agent, 8, 0);
             return;
         }
 
-        give_resources(&(cell->granted_resources), req.res_kind, req.amount);
+        give_resources(&cell->granted_resources, req.res_kind, req.amount);
         if (cell->granted_resources.current_cpu == 0 && cell->granted_resources.current_gpu == 0 &&
             cell->granted_resources.current_mem) {
-            hashmap_delete(job_map, &req.job_id);
+            hashmap_delete(state->job_map, &req.job_id);
             free(cell);
         } else
-            hashmap_put(job_map, &cell);
+            hashmap_put(state->job_map, &cell);
 
-        while (!queue_empty(job_queue)) {
-            ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
-            job_queue = dequeue(job_queue, (QueueFreeFunc)job_free);
-            handle_job_request(node_map, job_map, node_resources, timed_out_jobs, job_queue, erl,
-                               protection, epoll_fd);
+        while (!queue_empty(state->job_queue)) {
+            ErlangRequest erl = *(ErlangRequest *)queue_head(state->job_queue);
+            state->job_queue = dequeue(state->job_queue, (QueueFreeFunc)job_free);
+            handle_job_request(erl, epoll_fd, state);
         }
 
         break;

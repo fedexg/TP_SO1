@@ -34,14 +34,8 @@ int epoll_fd, num_fds_ready;
 int agent_port;
 static int seconds_passed = 0;
 struct epoll_event ev, events[EPOLL_MAX_EVENTS];
-int cluster_cpu, cluster_mem, cluster_gpu;
-LocalResources node_resources;
-Hashmap node_map, job_map;
-Queue job_queue;
-List timed_out_jobs;
 
-// We use this to manipulate job_queue atomically
-MutexCond protection;
+AgentState state;
 
 void *worker_thread_handler(void *arg);
 void *checker_thread_handler(void *arg);
@@ -64,22 +58,20 @@ int cleanup(int flags);
 
 int main(int argc, char **argv)
 {
-    pthread_mutex_init(&protection.mutex, NULL);
-    pthread_cond_init(&protection.nonempty_queue_cond, NULL);
+    pthread_mutex_init(&state.protection.mutex, NULL);
+    pthread_cond_init(&state.protection.nonempty_queue_cond, NULL);
 
-    node_resources.cpu = MAX_CPU;
-    node_resources.gpu = MAX_GPU;
-    node_resources.mem = MAX_MEM;
-    node_resources.current_cpu = node_resources.cpu;
-    node_resources.current_gpu = node_resources.gpu;
-    node_resources.current_mem = node_resources.mem;
+    state.node_resources.cpu = MAX_CPU;
+    state.node_resources.gpu = MAX_GPU;
+    state.node_resources.mem = MAX_MEM;
+    state.node_resources.current_cpu = state.node_resources.cpu;
+    state.node_resources.current_gpu = state.node_resources.gpu;
+    state.node_resources.current_mem = state.node_resources.mem;
 
-    node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy, (CmpFunc)node_cell_cmp, (FreeFunc)node_cell_free, (HashFunc)node_cell_hash); 
-    job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy, (CmpFunc)job_cell_cmp, (FreeFunc)job_cell_free, (HashFunc)job_cell_hash);
-
-    job_queue = queue_make();
-
-    timed_out_jobs = list_make();
+    state.node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy, (CmpFunc)node_cell_cmp, (FreeFunc)node_cell_free, (HashFunc)node_cell_hash); 
+    state.job_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)job_cell_copy, (CmpFunc)job_cell_cmp, (FreeFunc)job_cell_free, (HashFunc)job_cell_hash);
+    state.job_queue = queue_make();
+    state.timed_out_jobs = list_make();
 
     signal(SIGPIPE, SIG_IGN);
 
@@ -122,18 +114,18 @@ int main(int argc, char **argv)
     if (close_sockets() < 0)
         return 1;
 
-    pthread_cond_destroy(&protection.nonempty_queue_cond);
-    pthread_mutex_destroy(&protection.mutex);
+    pthread_cond_destroy(&state.protection.nonempty_queue_cond);
+    pthread_mutex_destroy(&state.protection.mutex);
     return 0;
 }
 
 void *worker_thread_handler(void *arg)
 {
     while (true) {
-        if (!queue_empty(job_queue)) {
-            ErlangRequest erl = *(ErlangRequest *)queue_head(job_queue);
-            handle_job_request(node_map, job_map, &node_resources, timed_out_jobs, job_queue, erl, protection, epoll_fd);
-            job_queue = dequeue(job_queue, (QueueFreeFunc)job_queue);
+        if (!queue_empty(state.job_queue)) {
+            ErlangRequest erl = *(ErlangRequest *)queue_head(state.job_queue);
+            handle_job_request(erl, epoll_fd, &state);
+            state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
         }
     }
 
@@ -145,12 +137,13 @@ void *checker_thread_handler(void *arg)
     while (true) {
         // If agent must use job_queue, give it time to do so
         sleep(CHECKER_QUEUE_USE_TIME);
-        pthread_mutex_lock(&protection.mutex);
+        pthread_mutex_lock(&state.protection.mutex);
 
-        while (queue_empty(job_queue))
-            pthread_cond_wait(&protection.nonempty_queue_cond, &protection.mutex);
+        while (queue_empty(state.job_queue))
+            pthread_cond_wait(&state.protection.nonempty_queue_cond,
+                              &state.protection.mutex);
 
-        for (QueueNode *p = job_queue; p != NULL; p = p->next) {
+        for (QueueNode *p = state.job_queue; p != NULL; p = p->next) {
             QueueNode *next = p->next;
             JobQueueData *job = (JobQueueData *)p->data;
             if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE)
@@ -160,7 +153,7 @@ void *checker_thread_handler(void *arg)
             p = next;
         }
 
-        pthread_mutex_unlock(&protection.mutex);
+        pthread_mutex_unlock(&state.protection.mutex);
     }
 
     return NULL;
@@ -168,17 +161,17 @@ void *checker_thread_handler(void *arg)
 
 void delete_from_job_queue(JobQueueData *job)
 {
-    if (job_queue == NULL || job == NULL)
+    if (state.job_queue == NULL || job == NULL)
         return;
 
     QueueNode *prev = NULL;
-    QueueNode *curr = job_queue;
+    QueueNode *curr = state.job_queue;
 
     while (curr != NULL) {
         // Check if this node contains the target job data
         if (curr->data == job) {
             if (prev == NULL) // The target job is at the head of the queue
-                job_queue = curr->next;
+                state.job_queue = curr->next;
             else // The target job is in the middle or at the end
                 prev->next = curr->next;
 
@@ -394,9 +387,9 @@ void send_udp_announce(void)
     char buffer[BUFFER_MAX_SIZE] = { 0 };
     sprintf(buffer, "ANNOUNCE %s %d cpu:%d mem:%d gpu:%d",
             my_ip, agent_port,
-            node_resources.cpu,
-            node_resources.mem,
-            node_resources.gpu);
+            state.node_resources.cpu,
+            state.node_resources.mem,
+            state.node_resources.gpu);
 
     // Because this is a UDP socket, we use sendto
     ssize_t bytes = sendto(udp_broadcast_sock, buffer, strlen(buffer), 0,
@@ -468,17 +461,9 @@ void *epoll_handler(void *arg)
                 int client_fd = events[i].data.fd;
 
                 if (client_fd == connect_public_sock)
-                    handle_c_agent(client_fd, node_map, job_map,
-                                    job_queue, timed_out_jobs,
-                                    &node_resources,
-                                    protection,
-                                    epoll_fd);
+                    handle_c_agent(client_fd, epoll_fd, &state);
                 else if (client_fd == connect_erlang_sock)
-                    handle_erlang_client(node_map, job_map,
-                                         job_queue, timed_out_jobs,
-                                         &node_resources,
-                                         protection,
-                                         client_fd, epoll_fd);
+                    handle_erlang_client(client_fd, epoll_fd, &state);
                 else {
                     char response[BUFFER_MAX_SIZE] = { 0 };
                     ssize_t bytes = read(client_fd, response, sizeof(response) - 1);
@@ -496,15 +481,16 @@ void check_agent_expiration_time(void)
 {
     time_t now = time(NULL);
 
-    for (int i = 0; i < node_map->cap; ++i) {
-        bool exists_item = node_map->items[i].data != NULL &&
-                            !node_map->items[i].deleted;
+    for (int i = 0; i < state.node_map->cap; ++i) {
+        bool exists_item = state.node_map->items[i].data != NULL &&
+                            !state.node_map->items[i].deleted;
         if (exists_item) {
-            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
+            NodeMapCell *node = (NodeMapCell *)state.node_map->items[i].data;
             double diff = difftime(now, node->time_when_called);
             if (diff >= 15.0) {
-                release_affected_jobs(node, node_map, job_map, &node_resources);
-                hashmap_delete(node_map, node);
+                release_affected_jobs(node, state.node_map,
+                                      state.job_map, &state.node_resources);
+                hashmap_delete(state.node_map, node);
             }
         }
     }
@@ -539,7 +525,7 @@ void handle_udp_packet(int udp_fd)
         return;
 
     char *ip = inet_ntoa(addr.sin_addr);
-    NodeMapCell *node = hashmap_search(node_map, &ip);
+    NodeMapCell *node = hashmap_search(state.node_map, &ip);
 
     // It's the first time the node was announced
     if (node == NULL){
@@ -563,7 +549,7 @@ void handle_udp_packet(int udp_fd)
 
     node->resources = resources;
     node->time_when_called = time(NULL);
-    hashmap_put(node_map, node);
+    hashmap_put(state.node_map, node);
 
     free(fields);
 }

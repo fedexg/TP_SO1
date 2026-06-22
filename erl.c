@@ -22,11 +22,7 @@ void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job
 int get_agent_connection(const char *ip, int port, int epoll_fd);
 
 // Handles an erlang client connection
-void handle_erlang_client(Hashmap node_map, Hashmap job_map,
-                          Queue job_queue, List timed_out_jobs,
-                          LocalResources *node_resources,
-                          MutexCond protection,
-                          int erlang_fd, int epoll_fd)
+void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
 {
     char buffer[BUFFER_MAX_SIZE] = { 0 };
     ssize_t bytes_read = read(erlang_fd, buffer, BUFFER_MAX_SIZE - 1);
@@ -40,17 +36,18 @@ void handle_erlang_client(Hashmap node_map, Hashmap job_map,
     } else {
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
-        ErlangRequest erl = parse_erlang_request(node_map, request_fields, length, erlang_fd);
+        ErlangRequest erl = parse_erlang_request(state->node_map,
+                                                 request_fields,
+                                                 length, erlang_fd);
 
         if (streq(request_fields[0], "JOB_REQUEST"))
-            handle_job_request(node_map, job_map, node_resources, timed_out_jobs,
-                               job_queue, erl, protection, epoll_fd);
+            handle_job_request(erl, epoll_fd, state);
         else if (streq(request_fields[0], "JOB_RELEASE"))
-            handle_job_release(node_map, job_map, node_resources, erl, epoll_fd);
+            handle_job_release(erl, epoll_fd, state);
         else if (streq(request_fields[0], "JOB_STATUS"))
-            handle_job_status(erl, job_map, job_queue, timed_out_jobs);
+            handle_job_status(erl, state);
         else if (streq(request_fields[0], "GET_NODES"))
-            handle_get_nodes(node_map, erl);
+            handle_get_nodes(state->node_map, erl);
         else {
             char *msg = "Error: comando desconocido";
             send(erlang_fd, msg, strlen(msg), 0);
@@ -61,15 +58,11 @@ void handle_erlang_client(Hashmap node_map, Hashmap job_map,
 }
 
 // Handles an incoming job request from the erlang client
-void handle_job_request(Hashmap node_map, Hashmap job_map,
-                        LocalResources *node_resources, List timed_out_jobs,
-                        Queue job_queue, ErlangRequest erl,
-                        MutexCond protection,
-                        int epoll_fd)
+void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
 {
     char msg[BUFFER_MAX_SIZE] = { 0 };
     long long job_id = erl.job_id;
-    LocalResources res = get_initial_resources(node_map);
+    LocalResources res = get_initial_resources(state->node_map);
 
     int cpu = 0, mem = 0, gpu = 0;
 
@@ -90,7 +83,8 @@ void handle_job_request(Hashmap node_map, Hashmap job_map,
     if (cpu > res.cpu || mem > res.mem || gpu > res.gpu) {
         memset(msg, 0, BUFFER_MAX_SIZE - 1);
         sprintf(msg, "JOB_TIMEOUT %lld", job_id);
-        timed_out_jobs = list_append(timed_out_jobs, &job_id, (ListCpyFunc)int_copy);
+        state->timed_out_jobs = list_append(state->timed_out_jobs, &job_id,
+                                            (ListCpyFunc)int_copy);
         send(erl.erlang_fd, msg, strlen(msg), 0);
         return;
     }
@@ -128,8 +122,8 @@ void handle_job_request(Hashmap node_map, Hashmap job_map,
 
         // Let's try not to send a message to ourselves...
         if (streq(alloc.ip, my_ip)) {
-            if (exists_resource(node_resources, alloc.res_kind, alloc.amount)) {
-                give_resources(node_resources, alloc.res_kind, alloc.amount);
+            if (exists_resource(&state->node_resources, alloc.res_kind, alloc.amount)) {
+                give_resources(&state->node_resources, alloc.res_kind, alloc.amount);
                 increase_resources(&local, alloc.res_kind, alloc.amount);
                 ++num_granted;
             }
@@ -166,7 +160,7 @@ void handle_job_request(Hashmap node_map, Hashmap job_map,
             for (int i = 0; i < erl.num_allocations; ++i) {
                 NodeAllocationInfo alloc = erl.node_allocations[i];
                 if (streq(alloc.ip, my_ip))
-                    increase_resources(node_resources, alloc.res_kind, alloc.amount);
+                    increase_resources(&state->node_resources, alloc.res_kind, alloc.amount);
                 else {
                     if (*(int *)p->data == alloc.agent_fd) {
                         char buffer[BUFFER_MAX_SIZE]  = { 0 };
@@ -178,8 +172,8 @@ void handle_job_request(Hashmap node_map, Hashmap job_map,
         }
 
         free(remote_allocs);
-        enqueue(job_queue, &erl, (QueueCpyFunc)job_copy);
-        pthread_cond_signal(&protection.nonempty_queue_cond);
+        enqueue(state->job_queue, &erl, (QueueCpyFunc)job_copy);
+        pthread_cond_signal(&state->protection.nonempty_queue_cond);
         return;
     }
 
@@ -189,7 +183,7 @@ void handle_job_request(Hashmap node_map, Hashmap job_map,
     cell->remote_allocations = remote_allocs;
     cell->granted_resources = local;
 
-    hashmap_put(job_map, cell);
+    hashmap_put(state->job_map, cell);
 
     memset(msg, 0, BUFFER_MAX_SIZE - 1);
     sprintf(msg, "JOB_GRANTED %lld", job_id);
@@ -197,12 +191,10 @@ void handle_job_request(Hashmap node_map, Hashmap job_map,
 }
 
 // Handles an incoming job release from the erlang client
-void handle_job_release(Hashmap node_map, Hashmap job_map,
-                        LocalResources *node_resources, ErlangRequest erl,
-                        int epoll_fd)
+void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
 {
     long long job_id = erl.job_id;
-    JobMapCell *cell = hashmap_search(job_map, &job_id);
+    JobMapCell *cell = hashmap_search(state->job_map, &job_id);
     if (cell == NULL) {
         char error_buf[1024] = { 0 };
         sprintf(error_buf, "Error: no existe el job con id %lld", job_id);
@@ -210,49 +202,51 @@ void handle_job_release(Hashmap node_map, Hashmap job_map,
         return;
     }
 
-    increase_resources(node_resources, RES_KIND_CPU, cell->granted_resources.current_cpu);
-    increase_resources(node_resources, RES_KIND_GPU, cell->granted_resources.current_gpu);
-    increase_resources(node_resources, RES_KIND_MEM, cell->granted_resources.current_mem);
+    increase_resources(&state->node_resources, RES_KIND_CPU,
+                       cell->granted_resources.current_cpu);
+    increase_resources(&state->node_resources, RES_KIND_MEM,
+                       cell->granted_resources.current_mem);
+    increase_resources(&state->node_resources, RES_KIND_GPU,
+                       cell->granted_resources.current_gpu);
 
     // Iterate over remotely allocated resources
     for (int i = 0; i < cell->num_remotely_allocated; i++) {
         RemoteAllocation remote = cell->remote_allocations[i];
         if (remote.resources.current_cpu > 0)
-            send_release_to_agent(node_map, remote.ip, job_id,
+            send_release_to_agent(state->node_map, remote.ip, job_id,
                                   "cpu", remote.resources.current_cpu,
                                   epoll_fd);
         if (remote.resources.current_mem > 0)
-            send_release_to_agent(node_map, remote.ip, job_id,
+            send_release_to_agent(state->node_map, remote.ip, job_id,
                                   "mem", remote.resources.current_mem,
                                   epoll_fd);
         if (remote.resources.current_gpu > 0)
-            send_release_to_agent(node_map, remote.ip, job_id,
+            send_release_to_agent(state->node_map, remote.ip, job_id,
                                   "gpu", remote.resources.current_gpu,
                                   epoll_fd);
     }
 
     free(cell->remote_allocations);
-    hashmap_delete(job_map, &job_id);
+    hashmap_delete(state->job_map, &job_id);
 }
 
 // Handles an incoming job status from the erlang client
-void handle_job_status(ErlangRequest erl, Hashmap job_map,
-                       Queue job_queue, List timed_out_jobs)
+void handle_job_status(ErlangRequest erl, AgentState *state)
 {
     long long job_id = erl.job_id;
-    JobMapCell *job = hashmap_search(job_map, &job_id);
+    JobMapCell *job = hashmap_search(state->job_map, &job_id);
     char buffer[BUFFER_MAX_SIZE] = { 0 };
 
     if (job != NULL) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_GRANTED %lld", job_id);
-    } else if (find_in_queue(job_queue, job_id)) {
+    } else if (find_in_queue(state->job_queue, job_id)) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_DENIED %lld", job_id);
-    } else if (find_in_list(timed_out_jobs, job_id)) {
+    } else if (find_in_list(state->timed_out_jobs, job_id)) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_TIMEOUT %lld", job_id);
-        delete_from_timed_out_jobs(timed_out_jobs, job_id);
+        delete_from_timed_out_jobs(state->timed_out_jobs, job_id);
     }
 
     send(erl.erlang_fd, buffer, strlen(buffer), 0);
@@ -263,7 +257,7 @@ bool find_in_queue(Queue queue, int id)
 {
     for (QueueNode* actual_node = queue; actual_node != NULL; actual_node = actual_node->next) {
         JobQueueData *job = (JobQueueData *)actual_node->data;
-        if (job->request.job_id== id)
+        if (job->request.job_id == id)
             return true;
     }
 

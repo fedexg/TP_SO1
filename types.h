@@ -5,6 +5,8 @@
 #include <time.h>
 #include "const.h"
 #include "ds/hashmap.h"
+#include "ds/queue.h"
+#include "ds/list.h"
 
 // Local node resources
 typedef struct _LocalResources {
@@ -77,6 +79,15 @@ typedef struct MutexCond {
     pthread_mutex_t mutex;
     pthread_cond_t nonempty_queue_cond;
 } MutexCond;
+
+// Structure that holds the global state of the program
+typedef struct AgentState {
+    LocalResources node_resources;
+    Hashmap node_map, job_map;
+    Queue job_queue;
+    List timed_out_jobs;
+    MutexCond protection; // We use this to manipulate job_queue atomically
+} AgentState;
 
 NodeMapCell *node_cell_copy(NodeMapCell *nmp);
 int node_cell_cmp(NodeMapCell *nmp1, NodeMapCell *nmp2);
