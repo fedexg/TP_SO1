@@ -9,7 +9,7 @@ default:
 	@echo "Error: se debe elegir qué compilar; make agente o make scheduler"
 
 scheduler:
-	@echo ":D"
+	@erl -noshell -run scheduler start -s init
 
 agente: $(C_OBJ)
 	$(CC) -o $(C_OUT) $(CFLAGS) $(C_OBJ)

@@ -39,6 +39,15 @@ este pida liberar esos recursos de su uso.
 $ git clone https://github.com/fedexg/TP_SO1
 $ cd TP_SO1/
 $ make agente
+```
+
+En una terminal, ejecutar el agente
+```sh
+$ ./agente <PORT>
+```
+
+Y en otra, ejecutar el scheduler
+```sh
 $ make scheduler
 ```
 
