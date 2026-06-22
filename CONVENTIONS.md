@@ -1,7 +1,7 @@
 # Convenciones de código
 ## C
 1. El código (variables, funciones...) se escribe en inglés. Ser preciso con los nombres.
-2. Los comentarios se escriben en inglés.
+2. Los comentarios se escriben en español.
 3. Los nombres de variables se escriben con snake_case.
 4. Los nombres de estructuras se escriben con PascalCase (salvo especificado otra cosa).
 5. Los statements de bloque (funciones, if, while, ...) tienen la llave en la misma linea, separada por un espacio.
@@ -18,12 +18,12 @@ int num_threads = 4;       // Sí.
 ```c
 // No:
 
-// Esta función calcula cuánto calor hace.
+// This function calculates how hot it is.
 void calor(int x);
 
 // Sí:
 
-// This function calculates how hot it is.
+// Esta función calcula cuánto calor hace.
 void hot(int x);
 ```
 
