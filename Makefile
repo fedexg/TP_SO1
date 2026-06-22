@@ -5,7 +5,13 @@ C_OBJ=$(C_SRC:.c=.o)
 C_OUT=agente
 CFLAGS=-Wall -Werror -pthread
 
-default: $(C_OBJ)
+default:
+	@echo "Error: se debe elegir qué compilar; make agente o make scheduler"
+
+scheduler:
+	@echo ":D"
+
+agente: $(C_OBJ)
 	$(CC) -o $(C_OUT) $(CFLAGS) $(C_OBJ)
 
 main.o: main.c
