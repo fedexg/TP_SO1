@@ -1,7 +1,7 @@
 -module(scheduler).
 -export([start/0]).
 
--export([start_scheduler/0, job_handler/5]).
+-export([start_scheduler/0, job_manager/5, message_manager/3]).
 -define(PORT,1337).
 
 % Inicia el iniciador del Scheduler y el simulador de cliente 
@@ -11,18 +11,18 @@ start() ->
     client_simulator(Scheduler).
 % %
 
-% Crea la comunicacion con el Agente C creando un socket tcp 
-% local conectado al Agente C. Ademas procede a iniciar el scheluder
+% Crea la comunicacion con el Agente C creando un socket tcp local. 
+% Ademas procede a iniciar el scheluder, compuesto por:
+% - El scheduler_loop/5: Que atiende las solicitudes de trabajo.
+% - Y el message_manager/3: Que administra la comunicacion Agente C -> Scheduler.%
 % %
 start_scheduler() ->
     {ok, Socket} = gen_tcp:connect("localhost",?PORT),
-    Message_Manager = spawn(?MODULE, message_manager, [Socket, self(), maps:new()]),
+    Scheduler_Pid = self(),
+    Message_Manager = spawn(?MODULE, message_manager, [Socket, Scheduler_Pid, maps:new()]),
     scheduler_loop(Socket, queue:new(), maps:new(), 1000, Message_Manager).
 % %
 
-% Funcion pricipal donde el proceso SCHEDULER hace el trabajo
-% de administrador de pedidos de trabajo de clientes simulados
-% %
 scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager) ->
     Nodes_Info = request_nodes_info(Socket),            % <- Cada nuevo loop, le pregunta al Agente C que opciones tiene para otorgar a los clientes. 
     case queue:is_empty(Job_Queue) of                   
@@ -30,54 +30,60 @@ scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager) ->
         false -> 
             {Queue_Head, New_Job_Queue} = queue:out(Job_Queue),             % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
             {value, {Job_Id, Job_Info}} = Queue_Head,
-            Client_Manager = spawn(?MODULE, job_handler, [Socket, Nodes_Info, Job_Id, Job_Info, Client_Map]),
-            Message_Manager ! {Job_Id, Client_Manager},
-            New_Client_Map = maps:remove(Job_Id, Client_Map),                       % <- Saca el JOB atendido
-            scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N);               
+            Job_Manager = spawn(?MODULE, job_manager, [Socket, Nodes_Info, Job_Id, Job_Info, maps:get(Job_Id, Client_Map)]),  %<- Se le asigna al JOB un manager para que lo gestione.
+            Message_Manager ! {Job_Id, Job_Manager},
+            New_Client_Map = maps:remove(Job_Id, Client_Map),                       % <- Saca el JOB de la atencion del Scheduler, ahora se encarga su manager.
+            scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N, Message_Manager);               
         _ -> receive
                     {new_job, Client_Id, Job_Info_Recv} -> 
                         New_Job_Queue = queue:in({N, Job_Info_Recv},Job_Queue),     % <- Encola el JOB con su id unico.
                         New_Client_Map = maps:add(N, Client_Id, Client_Map),        % <- Agrega en el diccionario el JOB asignado al cliente.
                         Client_Id ! {given_jobid, N},                               % <- Confirma al cliente el almacenamiento de su pedido a la cola.  
-                        scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N+1); 
+                        scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N+1, Message_Manager); 
                     {job_finished, Job_Id} ->
                         send_to_agent(Socket, release, integer_to_list(Job_Id)),                   
-                        scheduler_loop(Socket, Job_Queue, Client_Map, N);
+                        scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager);
                     _ -> 
-                        scheduler_loop(Socket, Job_Queue, Client_Map, N)
+                        scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager)
                 end
     end.
 % %
 
-job_handler(Socket, Nodes_Info, Job_Id, Job_Info, Client_Map) ->
+% Funcion que gestiona la solicitud de trabajo de un determinado cliente de pid Client_Pid.
+% %
+job_manager(Socket, Nodes_Info, Job_Id, Job_Info, Client_Pid) ->
     Job_Request_Results = check_job_valid(Socket, Nodes_Info, Job_Id, Job_Info),  % <- devuelve un mensaje para que el cliente sepa si su trabajo fue atendido con exito.
     case Job_Request_Results of
-        invalid_job -> 
-            maps:get(Job_Id, Client_Map) ! invalid_job;
-        waiting_on_manager -> 
+        invalid_job ->          %<- El pedido está fuera de los limites admitidos
+            Client_Pid ! invalid_job;
+        waiting_on_manager ->   %<- Comienza la espera 
             receive
-                Msg_to_client -> maps:get(Job_Id, Client_Map) ! Msg_to_client % ¡IMPORTANTE! Durante ésta funcion, el Agente C recibe el pedido y el handler queda en escucha.
+                Msg_to_client -> Client_Pid ! Msg_to_client % ¡IMPORTANTE! Durante ésta funcion, el Agente C recibe el pedido y el handler queda en escucha.
             end
     end.
+% %
 
+% Guarda, administra y reenvia los datos entrantes del Agente C, hacia el Sch. Erlang. Como la 
+% transmisión de datos es UDP, el manager está preparado para recibir la informacion en datagramas.
+% %
 message_manager(Socket, Scheduler_Pid, Manager_Map) ->
     receive
-        {Job_Id, Client_Manager} -> 
-            New_Manager_Map = maps:add(Job_Id, Client_Manager, Manager_Map),
+        {Job_Id, Job_Manager} -> 
+            New_Manager_Map = maps:add(Job_Id, Job_Manager, Manager_Map),
             message_manager(Socket, Scheduler_Pid, New_Manager_Map)
-    after 0 -> 
-            Data = gen_tcp:recv(Socket, 0),  %<- Espera a que responda el Agente C
-            Data_List = string:tokens(String_Nodes, "\n"),
-            lists:foreach(fun(Elem) -> job_request_inbox(Socket, Elem, Scheduler_Pid, Manager_Map) end, Data_List),
-            message_manager(Socket, Scheduler_Pid, Manager_Map)
+    after 0 ->                                                                          %<- Siempre que el buzon no este vacio, pasa inmediatamente a este bloque.
+            Data = gen_tcp:recv(Socket, 0),                                             %<- Espera a que responda el Agente C.
+            Data_List = string:tokens(Data, "\n"),                                      %<- Previene errores de datapacks al separarlos por '\n'.
+            lists:foreach(fun(Elem) -> job_request_inbox(Socket, Elem, Scheduler_Pid, Manager_Map) end, Data_List), 
+            message_manager(Socket, Scheduler_Pid, Manager_Map)         
     end.
+% %    
 
-    
-
-% request_nodes_info/1: Funcion para consultarle al Agente C los nodos que posee a disposicion. 
-% Utilizada para devuelve una 4-upla Nodes_Info utilizada por la funcion scheduler_loop.
+% request_nodes_info/1: Funcion auxilear de scheduler_loop/5 para consultarle al 
+% Agente C los nodos que posee a disposicion. Devuelve Nodes_Info en scheduler_loop.
 % %
-% parse_node_info/2: Funcion auxilear de request_nodes_info para parsear la información recibida de consultar al Agente C. 
+% parse_node_info/2: Funcion auxilear de request_nodes_info para parsear la 
+% información recibida de consultar al Agente C. 
 % %
 % manage_nodes_info/1: Funcion auxilear de parse_node_info/2 que calcula el maximo 
 % habilitado para pedir cada determinado recurso.
@@ -89,8 +95,7 @@ request_nodes_info(Socket) ->
     gen_tcp:send(Socket, "GET_NODES"),
     receive
         {nodes, Data} -> parse_node_info(Data) 
-    end.
-    
+    end.    
 % %
 
 parse_node_info(String_Nodes) ->
@@ -112,38 +117,40 @@ fold_node_data(L, Acum, Data_Index) ->
 % %
 
 
-% Recibe y Analiza el resultado enviado por el Agente C, en respuesta de
-% un JOB_REQUEST enviado por el Sch. Erlang previamente. 
-%  Tiene dos funciones principales:
-%    * Devolver un atomo para informar que un trabajo fue atendido. Tanto 
-%      por si fue aceptado y se les otorgó los recursos al respectivo cliente,
-%      como si fue eliminado de la cola de espera por sobrepasar el tiempo limite.
-%    * Loopear junto a la funcion send_to_agent/3, con el objetivo de constantemente
-%      consultarle al Agente C el estado del pedido hecho anteriormente.%
+% job_request_inbox: Analiza un unico envio hecho por el Agente C a la vez.
+% Ademas, consulta en periodos de 5 segundos al Agente C del estado del pedido asignado
+% %
+% write_inbox: Funcion auxilear que crea/escribe en un archivo que lleva registro
+% de la comunicacion entre el Scheduler Erlang y el Agente C.
 % %
 job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
     write_inbox(Data),
     case string:split(Data, " ") of
         ["NODES" | String_Nodes] -> Scheduler_Pid ! String_Nodes;
-        ["JOB_GRANTED" | Job_Id] -> maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! valid_job;
+
+        ["JOB_GRANTED" | Job_Id] -> maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! valid_job;  %maps:get(list_to_integer(hd(Job_Id)),Manager_Map) == Job_Manager Pid
+
         ["JOB_DENIED" | Job_Id] -> io:fwrite("Job is on the queue by the C agent~n"),
-                                    timer:sleep(5000),
+                                    timer:sleep(5000),                                  %<- Espera inactiva.
                                     send_to_agent(Socket, status, hd(Job_Id)); 
+
         ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
                                     maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! invalid_job;
+
         Any -> io:fwrite("Command error: ~p~n", [Any])
     end.
 % %
 
 write_inbox(Data) ->
-    File_Name = "scheduler_log.txt"
-    Data_To_Write = "# El cliente C responde a Erlang:\n\t"++Data++"\n",
-    case file:write_file(Filename, Data_To_Write) of
+    File_Name = "scheduler_log.txt",
+    Data_To_Write = "# Agent C responce to Erlang Scheduler:\n\t"++Data++"\n",
+    case file:write_file(File_Name, Data_To_Write) of
         ok -> 
             io:format("Written Inbox in the Log.~n");
         {error, Reason} -> 
             io:format("Failed to write file: ~p~n", [Reason])
     end.
+% %
 
 % 
 % Funcion auxiliar que realiza envios informativos al Agente C.
