@@ -16,21 +16,22 @@ start() ->
 % %
 start_scheduler() ->
     {ok, Socket} = gen_tcp:connect("localhost",?PORT),
-    Message_Manager = spawn(?MODULE, message_manager, []),
-    scheduler_loop(Socket, queue:new(), maps:new(), 1000, false, Message_Manager).
+    Message_Manager = spawn(?MODULE, message_manager, [Socket, self(), maps:new()]),
+    scheduler_loop(Socket, queue:new(), maps:new(), 1000, Message_Manager).
 % %
 
 % Funcion pricipal donde el proceso SCHEDULER hace el trabajo
 % de administrador de pedidos de trabajo de clientes simulados
 % %
-scheduler_loop(Socket, Job_Queue, Client_Map, N) ->
+scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager) ->
     Nodes_Info = request_nodes_info(Socket),            % <- Cada nuevo loop, le pregunta al Agente C que opciones tiene para otorgar a los clientes. 
     case queue:is_empty(Job_Queue) of                   
         % La cola de JOBS tiene elementos: atiende el JOB que desencola. 
         false -> 
             {Queue_Head, New_Job_Queue} = queue:out(Job_Queue),             % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
             {value, {Job_Id, Job_Info}} = Queue_Head,
-            spawn(?MODULE, job_handler, [Socket, Nodes_Info, Job_Id, Job_Info, Client_Map]),
+            Client_Manager = spawn(?MODULE, job_handler, [Socket, Nodes_Info, Job_Id, Job_Info, Client_Map]),
+            Message_Manager ! {Job_Id, Client_Manager},
             New_Client_Map = maps:remove(Job_Id, Client_Map),                       % <- Saca el JOB atendido
             scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N);               
         _ -> receive
@@ -49,10 +50,28 @@ scheduler_loop(Socket, Job_Queue, Client_Map, N) ->
 % %
 
 job_handler(Socket, Nodes_Info, Job_Id, Job_Info, Client_Map) ->
-    Msg_to_client = check_job_valid(Socket, Nodes_Info, Job_Id, Job_Info),  % <- devuelve un mensaje para que el cliente sepa si su trabajo fue atendido con exito.
-    maps:get(Job_Id, Client_Map) ! Msg_to_client.                           % ¡IMPORTANTE! Durante ésta funcion, el Agente C recibe el pedido y el handler queda en escucha.
+    Job_Request_Results = check_job_valid(Socket, Nodes_Info, Job_Id, Job_Info),  % <- devuelve un mensaje para que el cliente sepa si su trabajo fue atendido con exito.
+    case Job_Request_Results of
+        invalid_job -> 
+            maps:get(Job_Id, Client_Map) ! invalid_job;
+        waiting_on_manager -> 
+            receive
+                Msg_to_client -> maps:get(Job_Id, Client_Map) ! Msg_to_client % ¡IMPORTANTE! Durante ésta funcion, el Agente C recibe el pedido y el handler queda en escucha.
+            end
+    end.
 
-message_manager() ->
+message_manager(Socket, Scheduler_Pid, Manager_Map) ->
+    receive
+        {Job_Id, Client_Manager} -> 
+            New_Manager_Map = maps:add(Job_Id, Client_Manager, Manager_Map),
+            message_manager(Socket, Scheduler_Pid, New_Manager_Map)
+    after 0 -> 
+            Data = gen_tcp:recv(Socket, 0),  %<- Espera a que responda el Agente C
+            Data_List = string:tokens(String_Nodes, "\n"),
+            lists:foreach(fun(Elem) -> job_request_inbox(Socket, Elem, Scheduler_Pid, Manager_Map) end, Data_List),
+            message_manager(Socket, Scheduler_Pid, Manager_Map)
+    end.
+
     
 
 % request_nodes_info/1: Funcion para consultarle al Agente C los nodos que posee a disposicion. 
@@ -67,15 +86,16 @@ message_manager() ->
 % de un determinado tipo de recurso
 % %
 request_nodes_info(Socket) ->
+    gen_tcp:send(Socket, "GET_NODES"),
+    receive
+        {nodes, Data} -> parse_node_info(Data) 
+    end.
     
 % %
 
-parse_node_info(Data) ->
-    case string:split(Data, " ") of
-        ["NODES" | String_Nodes] -> List_Nodes = string:tokens(String_Nodes, ";"), % ["NODES"] | ["IP_N1:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3", "IP_N2:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3", ...] %"
-                                    manage_nodes_info(List_Nodes); 
-        Any -> io:fwrite("Error in info: ~p~n", [Any])
-    end.
+parse_node_info(String_Nodes) ->
+    List_Nodes = string:tokens(String_Nodes, ";"), % ["NODES"] | ["IP_N1:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3", "IP_N2:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3", ...] %"
+    manage_nodes_info(List_Nodes).
 % %      
 
 manage_nodes_info(List_Nodes) ->                                         
@@ -101,21 +121,17 @@ fold_node_data(L, Acum, Data_Index) ->
 %    * Loopear junto a la funcion send_to_agent/3, con el objetivo de constantemente
 %      consultarle al Agente C el estado del pedido hecho anteriormente.%
 % %
-job_request_inbox(Socket) ->
-    Data = gen_tcp:recv(Socket, 0),  %<- Espera a que responda el Agente C
+job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
     write_inbox(Data),
     case string:split(Data, " ") of
-        ["JOB_GRANTED" | _Job_Id] -> valid_job; 
-        
+        ["NODES" | String_Nodes] -> Scheduler_Pid ! String_Nodes;
+        ["JOB_GRANTED" | Job_Id] -> maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! valid_job;
         ["JOB_DENIED" | Job_Id] -> io:fwrite("Job is on the queue by the C agent~n"),
                                     timer:sleep(5000),
                                     send_to_agent(Socket, status, hd(Job_Id)); 
-
-        ["JOB_TIMEOUT" | _Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
-                                    invalid_job;
-
+        ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
+                                    maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! invalid_job;
         Any -> io:fwrite("Command error: ~p~n", [Any]),
-               job_request_inbox(Socket)
     end.
 % %
 
@@ -134,10 +150,8 @@ write_inbox(Data) ->
 % %
 send_to_agent(Socket, Message_Type, INFO) ->
     case Message_Type of
-        request -> gen_tcp:send(Socket, "JOB_REQUEST "++INFO),
-                   job_request_inbox(Socket);
-        status ->  gen_tcp:send(Socket, "JOB_STATUS "++INFO),
-                   job_request_inbox(Socket);
+        request -> gen_tcp:send(Socket, "JOB_REQUEST "++INFO);
+        status ->  gen_tcp:send(Socket, "JOB_STATUS "++INFO);
         release -> gen_tcp:send(Socket, "JOB_RELEASE "++INFO),
                    timer:sleep(5000)
     end.
@@ -166,7 +180,8 @@ check_job_valid(Socket, Nodes_Info, Job_Id, Job_Info) ->
     {CPU, MEM, GPU} = Job_Info,
     if 
         Max_CPU - CPU >= 0, Max_MEM - MEM >= 0, Max_GPU - GPU >= 0 ->
-            manage_job_info(Socket, List_Nodes, Job_Id, Job_Info);
+            manage_job_info(Socket, List_Nodes, Job_Id, Job_Info),
+            waiting_on_manager;
         true ->
             invalid_job
     end.
