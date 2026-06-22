@@ -98,11 +98,10 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 
         // Atendemos solicitudes encoladas en orden
         while (!queue_empty(state->job_queue)) {
-            ErlangRequest erl = *(ErlangRequest *)queue_head(state->job_queue);
-
             // Debemos proteger la cola para evitar conflictos con
             // worker_thread_handler en main
             pthread_mutex_lock(&state->protection.mutex);
+            ErlangRequest erl = *(ErlangRequest *)queue_head(state->job_queue);
             state->job_queue = dequeue(state->job_queue, (QueueFreeFunc)job_free);
             pthread_mutex_unlock(&state->protection.mutex);
 
