@@ -214,12 +214,12 @@ manage_job_info(Socket, List_Nodes, Job_Id, Job_Info) ->
 % %  
 
 map_node_data(L, Data_Index) ->
-    Data = string:split(L, ":"),
+    Data = string:tokens(L, ":"),
     lists:nth(Data_Index, Data).
 % %
 
 map_node_data_to_int(L, Data_Index) ->
-    Data = string:split(L, ":"),
+    Data = string:tokens(L, ":"),
     list_to_integer(lists:nth(Data_Index, Data)).
 % %
 
