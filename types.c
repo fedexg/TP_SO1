@@ -21,7 +21,7 @@ NodeMapCell *node_cell_copy(NodeMapCell *nmc)
     return cloned;
 }
 
-// Compara dos NodeMapCell por ip
+// Compara dos NodeMapCell por ip y puerto
 int node_cell_cmp(NodeMapCell *nmc1, NodeMapCell *nmc2)
 {
     return strcmp(nmc1->ip, nmc2->ip) && (nmc1->port == nmc2->port);
