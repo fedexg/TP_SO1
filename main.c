@@ -91,6 +91,18 @@ int main(int argc, char **argv)
     else
         agent_port = atoi(argv[1]);
 
+    char ip_buffer[BUFFER_MAX_SIZE];
+    get_local_ip(ip_buffer, BUFFER_MAX_SIZE);
+
+    NodeMapCell* local_node = malloc(sizeof(NodeMapCell));
+    local_node->ip = strdup(ip_buffer);
+    local_node->port = agent_port;
+    local_node->resources = state.node_resources;
+    local_node->socket_fd = -1;
+    local_node->time_when_called = time(NULL);
+
+    hashmap_put(state.node_map,local_node);
+    
     log_message("[C]: Inicializando agente en el puerto %d", agent_port);
 
     // Estructura del programa:
