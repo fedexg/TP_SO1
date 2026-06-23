@@ -17,10 +17,13 @@ start() ->
 % - Y el message_manager/3: Que administra la comunicacion Agente C -> Scheduler.%
 % %
 start_scheduler() ->
-    {ok, Socket} = gen_tcp:connect("localhost",?PORT),
-    Scheduler_Pid = self(),
-    Message_Manager = spawn(?MODULE, message_manager, [Socket, Scheduler_Pid, maps:new()]),
-    scheduler_loop(Socket, queue:new(), maps:new(), 1000, Message_Manager).
+    case gen_tcp:connect("localhost",?PORT) of
+        {ok, Socket} ->
+            Scheduler_Pid = self(),
+            Message_Manager = spawn(?MODULE, message_manager, [Socket, Scheduler_Pid, maps:new()]),
+            scheduler_loop(Socket, queue:new(), maps:new(), 1000, Message_Manager).
+        {error, Reason} ->
+            io:fwrite("Error, reason: ~p~n",[Reason]).
 % %
 
 scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager) ->
