@@ -10,6 +10,7 @@ default:
 	@echo "Error: se debe elegir qué compilar; make agente o make scheduler"
 
 scheduler:
+	@erlc scheduler.erl
 	@erl -noshell -run scheduler start -s init
 	
 scheduler_test:
