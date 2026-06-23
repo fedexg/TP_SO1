@@ -1,7 +1,7 @@
 -module(schedulerTEST).
 -export([start/0]).
 
--export([start_scheduler/0, scheduler_loop/5, job_manager/5, message_manager/3, not_agent_loop/2]).
+-export([start_scheduler/0, scheduler_loop/5, job_manager/5, message_manager/3, start_not_agent/0]).
 %-define(PORT,1337).
 
 % Cosa que debe devolver el agente dado un get_nodes
@@ -15,19 +15,19 @@
 not_agent_loop(Map_Of_JOBs, Message_Manager) ->
     io:fwrite("TESTER :: ~n"),
     receive 
-        "GET_NODES" -> % Tengo que devolver un NODES 192.168.1.10:8100:cpu:4:mem:8192:gpu:1;192.168.1.11:8101:cpu:2:mem:4096
+        "GET_NODES\n" -> % Tengo que devolver un NODES 192.168.1.10:8100:cpu:4:mem:8192:gpu:1;192.168.1.11:8101:cpu:2:mem:4096
             io:fwrite("TESTER :: HOLA???? ~p~n",[self()]),
-            List_Of_Rand_Nodes = make_rand_nodes(rand:uniform(10)),
+            List_Of_Rand_Nodes = make_rand_nodes(1 + rand:uniform(2)),
                                 % Esto devuelve algo tipo ["192.168.1.10:8100:cpu:4:mem:8192:gpu:1","192.168.1.11:8101:cpu:2:mem:4096:gpu:0",N-veces]
-            String_responce = "NODES " ++ string:join(List_Of_Rand_Nodes,";") ++ "\n",
-            Message_Manager ! {get_nodes, String_responce},
-            io:fwrite("TESTER :: A~n"),
+            String_Response = "NODES " ++ string:join(List_Of_Rand_Nodes, ";") ++ "\n",
+            Message_Manager ! {ok, String_Response},
+            io:fwrite("TESTER :: GET_NODES~n"),
             not_agent_loop(Map_Of_JOBs, Message_Manager);
 
         "JOB_REQUEST " ++ STRING -> %JOB_REQUEST Job_Id @192.168.1.2:cpu:2 @192.168.1.3:gpu:1
             Data_Splited = string:tokens(STRING, " "),
             Job_Id = hd(Data_Splited),
-            io:fwrite("TESTER :: B~n"),
+            io:fwrite("TESTER :: JOB_REQUEST~n"),
             case io:get_line("TESTER :: 1: Enviar un 'JOB_GRANTED' al scheduler\nTESTER :: 2: Enviar un 'JOB_DENIED' al scheduler\nTESTER :: ") of 
                 "1\n" -> 
                     Message_Manager ! {ok, "JOB_GRANTED " ++ Job_Id}, 
@@ -40,7 +40,7 @@ not_agent_loop(Map_Of_JOBs, Message_Manager) ->
         "JOB_STATUS " ++ STRING -> %JOB_STATUS Job_Id
             Data_Splited = string:tokens(STRING, " "),
             Job_Id = hd(Data_Splited),
-            io:fwrite("TESTER :: C~n"),
+            io:fwrite("TESTER :: JOB_STATUS~n"),
             case io:get_line("TESTER :: 1: Enviar un 'JOB_GRANTED' al scheduler\nTESTER :: 2: Enviar un 'JOB_DENIED' al scheduler\nTESTER :: 3: Enviar un 'JOB_TIMEOUT' al scheduler\nTESTER ::") of 
                 "1\n" -> 
                     Message_Manager ! {ok, "JOB_GRANTED " ++ Job_Id}, %JOB_GRATED 12
@@ -57,6 +57,7 @@ not_agent_loop(Map_Of_JOBs, Message_Manager) ->
             Data_Splited = string:tokens(STRING, " "),
             Job_Id = hd(Data_Splited),
             List_Of_JOBs = maps:to_list(Map_Of_JOBs),
+            io:fwrite("TESTER :: JOB_RELEASE~n"),
             lists:foreach(fun(A)-> io:fwrite("TESTER :: ~p~n", [A]) end, List_Of_JOBs),
             case maps:find(list_to_integer(Job_Id), Map_Of_JOBs) of
                 {ok, granted} ->
@@ -98,10 +99,17 @@ start() ->
 % - Y el message_manager/3: Que administra la comunicacion Agente C -> Scheduler.%
 % %
 start_scheduler() ->
-    Message_Manager_Pid = self(),
-    Not_Socket = spawn(?MODULE, not_agent_loop, [maps:new(), Message_Manager_Pid]),
-    Scheduler_Pid = spawn(?MODULE,scheduler_loop,[Not_Socket, queue:new(), maps:new(), 1000, Message_Manager_Pid]),
-    message_manager(Not_Socket, Scheduler_Pid, maps:new()).
+    Scheduler_Pid = self(),
+    Not_Socket = spawn(?MODULE, start_not_agent, []),
+    Message_Manager = spawn(?MODULE, message_manager, [Not_Socket, Scheduler_Pid, maps:new()]),
+    Not_Socket ! Message_Manager,
+    scheduler_loop(Not_Socket, queue:new(), maps:new(), 1000, Message_Manager).
+% %
+
+start_not_agent() ->
+    receive
+        Message_Manager_Pid ->
+            not_agent_loop(maps:new(),Message_Manager_Pid) end. 
 % %
 
 scheduler_loop(Not_Socket, Job_Queue, Client_Map, N, Message_Manager) ->
@@ -112,19 +120,21 @@ scheduler_loop(Not_Socket, Job_Queue, Client_Map, N, Message_Manager) ->
             {Queue_Head, New_Job_Queue} = queue:out(Job_Queue),             % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
             {value, {Job_Id, Job_Info}} = Queue_Head,
             Job_Manager = spawn(?MODULE, job_manager, [Not_Socket, Nodes_Info, Job_Id, Job_Info, maps:get(Job_Id, Client_Map)]),  %<- Se le asigna al JOB un manager para que lo gestione.
-            Message_Manager ! {Job_Id, Job_Manager},
+            Message_Manager ! {scheduler_loop, Job_Id, Job_Manager},
             New_Client_Map = maps:remove(Job_Id, Client_Map),                       % <- Saca el JOB de la atencion del Scheduler, ahora se encarga su manager.
             scheduler_loop(Not_Socket, New_Job_Queue, New_Client_Map, N, Message_Manager);               
         _ -> receive
                     {new_job, Client_Id, Job_Info_Recv} -> 
                         New_Job_Queue = queue:in({N, Job_Info_Recv},Job_Queue),     % <- Encola el JOB con su id unico.
-                        New_Client_Map = maps:add(N, Client_Id, Client_Map),        % <- Agrega en el diccionario el JOB asignado al cliente.
+                        New_Client_Map = maps:put(N, Client_Id, Client_Map),        % <- Agrega en el diccionario el JOB asignado al cliente.
+                        io:fwrite("SCHE :: HOLA???? ~p~n",[New_Client_Map]),
                         Client_Id ! {given_jobid, N},                               % <- Confirma al cliente el almacenamiento de su pedido a la cola.  
                         scheduler_loop(Not_Socket, New_Job_Queue, New_Client_Map, N+1, Message_Manager); 
                     {job_finished, Job_Id} ->
                         send_to_agent(Not_Socket, release, integer_to_list(Job_Id)),                   
                         scheduler_loop(Not_Socket, Job_Queue, Client_Map, N, Message_Manager);
-                    _ -> 
+                    Any -> 
+
                         scheduler_loop(Not_Socket, Job_Queue, Client_Map, N, Message_Manager)
                 end
     end.
@@ -149,14 +159,14 @@ job_manager(Not_Socket, Nodes_Info, Job_Id, Job_Info, Client_Pid) ->
 % %
 message_manager(Not_Socket, Scheduler_Pid, Manager_Map) ->
     receive
-        {Job_Id, Job_Manager} -> 
-            New_Manager_Map = maps:add(Job_Id, Job_Manager, Manager_Map),
+        {scheduler_loop, Job_Id, Job_Manager} -> 
+            New_Manager_Map = maps:put(Job_Id, Job_Manager, Manager_Map),
             message_manager(Not_Socket, Scheduler_Pid, New_Manager_Map)
-    after 0 ->                                                                          %<- Siempre que el buzon no este vacio, pasa inmediatamente a este bloque.
+    after 0 ->                                                                       %<- Siempre que el buzon no este vacio, pasa inmediatamente a este bloque.
             receive                                                                     %<- Espera a que responda el Agente C.
-                Data ->                                              
+                {ok, Data} ->                                              
                     io:fwrite("MANAGER :: HOLA???? ~p~n",[Data]),
-                    Data_List = string:tokens(Data, "\n"),                                      %<- Previene errores de datapacks al separarlos por '\n'.
+                    Data_List = string:tokens(Data, "\n"),                              %<- Previene errores de datapacks al separarlos por '\n'.
                     lists:foreach(fun(Elem) -> job_request_inbox(Not_Socket, Elem, Scheduler_Pid, Manager_Map) end, Data_List), 
                     message_manager(Not_Socket, Scheduler_Pid, Manager_Map)
             end
@@ -176,10 +186,9 @@ message_manager(Not_Socket, Scheduler_Pid, Manager_Map) ->
 % de un determinado tipo de recurso
 % %
 request_nodes_info(Not_Socket) ->
-    Not_Socket ! "GET_NODES " ++ pid_to_list(self()),
-    io:fwrite("HOLA???? ~p~n",[self()]),
+    Not_Socket ! "GET_NODES\n",
     receive
-        {nodes, Data} -> parse_node_info(Data) 
+        {nodes, Data} -> parse_node_info(Data)
     end.    
 % %
 
@@ -192,11 +201,11 @@ manage_nodes_info(List_Nodes) ->
     Max_CPU = lists:foldl(fun(L,Acum) -> fold_node_data(L, Acum, 4) end, 0, List_Nodes),
     Max_MEM = lists:foldl(fun(L,Acum) -> fold_node_data(L, Acum, 6) end, 0, List_Nodes),
     Max_GPU = lists:foldl(fun(L,Acum) -> fold_node_data(L, Acum, 8) end, 0, List_Nodes),
-    {Max_CPU, Max_MEM, Max_GPU, List_Nodes}. 
+    {Max_CPU, Max_MEM, Max_GPU, List_Nodes}.
 % %
 
 fold_node_data(L, Acum, Data_Index) ->
-    Data = string:split(L, ":"),
+    Data = string:tokens(L, ":"),
     NewAcum = Acum + list_to_integer(lists:nth(Data_Index, Data)),
     NewAcum.
 % %
@@ -211,7 +220,7 @@ fold_node_data(L, Acum, Data_Index) ->
 job_request_inbox(Not_Socket, Data, Scheduler_Pid, Manager_Map) ->
     write_inbox(Data),
     case string:split(Data, " ") of
-        ["NODES" | String_Nodes] -> Scheduler_Pid ! String_Nodes;
+        ["NODES" | String_Nodes] -> Scheduler_Pid ! {nodes, hd(String_Nodes)};
 
         ["JOB_GRANTED" | Job_Id] -> maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! valid_job;  %maps:get(list_to_integer(hd(Job_Id)),Manager_Map) == Job_Manager Pid
 
@@ -242,9 +251,9 @@ write_inbox(Data) ->
 % %
 send_to_agent(Not_Socket, Message_Type, INFO) ->
     case Message_Type of
-        request -> Not_Socket ! "JOB_REQUEST " ++ pid_to_list(self()) ++ " " ++ INFO;
-        status ->  Not_Socket ! "JOB_STATUS " ++ pid_to_list(self()) ++ " " ++ INFO;
-        release -> Not_Socket ! "JOB_RELEASE " ++ pid_to_list(self()) ++ " " ++ INFO,
+        request -> Not_Socket ! "JOB_REQUEST " ++ INFO;
+        status ->  Not_Socket ! "JOB_STATUS " ++ INFO;
+        release -> Not_Socket ! "JOB_RELEASE " ++ INFO,
                    timer:sleep(5000)
     end.
 % %
@@ -294,12 +303,12 @@ manage_job_info(Not_Socket, List_Nodes, Job_Id, Job_Info) ->
 % %  
 
 map_node_data(L, Data_Index) ->
-    Data = string:split(L, ":"),
+    Data = string:tokens(L, ":"),
     lists:nth(Data_Index, Data).
 % %
 
 map_node_data_to_int(L, Data_Index) ->
-    Data = string:split(L, ":"),
+    Data = string:tokens(L, ":"),
     list_to_integer(lists:nth(Data_Index, Data)).
 % %
 
