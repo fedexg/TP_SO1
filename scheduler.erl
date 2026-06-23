@@ -95,6 +95,7 @@ message_manager(Socket, Scheduler_Pid, Manager_Map) ->
 % de un determinado tipo de recurso
 % %
 request_nodes_info(Socket) ->
+    io:fwrite("[Erlang]: Asking the C agent for the Nodes data~n"),
     gen_tcp:send(Socket, "GET_NODES"),
     receive
         {nodes, Data} -> parse_node_info(Data) 
@@ -129,17 +130,15 @@ fold_node_data(L, Acum, Data_Index) ->
 job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
     write_inbox(Data),
     case string:split(Data, " ") of
-        ["NODES" | String_Nodes] -> Scheduler_Pid ! String_Nodes;
-
-        ["JOB_GRANTED" | Job_Id] -> maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! valid_job;  %maps:get(list_to_integer(hd(Job_Id)),Manager_Map) == Job_Manager Pid
-
-        ["JOB_DENIED" | Job_Id] -> io:fwrite("Job is on the queue by the C agent~n"),
+        ["NODES" | String_Nodes] -> io:fwrite("[Erlang]: Node data received from the C agent~n"),
+                                    Scheduler_Pid ! String_Nodes;
+        ["JOB_GRANTED" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" was granted by the C agent~n"),
+                                    maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! valid_job;  %maps:get(list_to_integer(hd(Job_Id)),Manager_Map) == Job_Manager Pid
+        ["JOB_DENIED" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" is on the queue by the C agent~n"),
                                     timer:sleep(5000),                                  %<- Espera inactiva.
                                     send_to_agent(Socket, status, hd(Job_Id)); 
-
-        ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("Job was timeouted by the C agent~n"),
+        ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" was timeouted by the C agent~n"),
                                     maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! invalid_job;
-
         Any -> io:fwrite("Command error: ~p~n", [Any])
     end.
 % %
@@ -160,10 +159,13 @@ write_inbox(Data) ->
 % %
 send_to_agent(Socket, Message_Type, INFO) ->
     case Message_Type of
-        request -> gen_tcp:send(Socket, "JOB_REQUEST "++INFO++"\n");
-        status ->  gen_tcp:send(Socket, "JOB_STATUS "++INFO++"\n");
-        release -> gen_tcp:send(Socket, "JOB_RELEASE "++INFO++"\n"),
-                   timer:sleep(5000)
+        request -> io:fwrite("[Erlang]: Sending the request of job "++INFO++" to the C agent~n"),
+                    gen_tcp:send(Socket, "JOB_REQUEST "++INFO++"\n");
+        status ->  io:fwrite("[Erlang]: Asking for the status of the "++INFO++" job to the C agent~n"),
+                    gen_tcp:send(Socket, "JOB_STATUS "++INFO++"\n");
+        release -> io:fwrite("[Erlang]: Asking for the release of the "++INFO++" job to the C agent~n"),
+                    gen_tcp:send(Socket, "JOB_RELEASE "++INFO++"\n"),
+                    timer:sleep(5000)
     end.
 % %
 
