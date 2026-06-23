@@ -14,6 +14,8 @@
 #include "ds/queue.h"
 #include "ds/list.h"
 
+#include "log/log.h"
+
 bool find_in_queue(Queue queue, int id);
 bool find_in_list(List list, int id);
 void delete_from_timed_out_jobs(List timed_out_jobs, int id);
@@ -40,6 +42,7 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
         // Falta que lleguen datos
         return;
     else {
+        log_message("[C]: Procesando petición enviada por un cliente Erlang");
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
         ErlangRequest erl = parse_erlang_request(state->node_map,
@@ -57,6 +60,7 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
             handle_get_nodes(state->node_map, erl);
         else { // Si no es una petición que conozcamos,
                // informamos que es desconocida
+            log_message("[C]: Petición desconocida recibida: %s", request_fields[0]);
             char *msg = "Error: comando desconocido";
             send(erlang_fd, msg, strlen(msg), 0);
         }
@@ -71,6 +75,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
     char msg[BUFFER_MAX_SIZE] = { 0 };
     long long job_id = erl.job_id;
     LocalResources res = get_initial_resources(state->node_map);
+
+    log_message("[C]: Procesando petición de recursos sobre job id %lld", job_id);
 
     int cpu = 0, mem = 0, gpu = 0;
 
@@ -89,6 +95,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
     // que teníamos inicialmente del cluster. Entonces, el job
     // no se puede hacer y enviamos TIMEOUT
     if (cpu > res.cpu || mem > res.mem || gpu > res.gpu) {
+        log_message("[C]: Enviando timeout al cliente Erlang");
+
         memset(msg, 0, BUFFER_MAX_SIZE - 1);
         sprintf(msg, "JOB_TIMEOUT %lld\n", job_id);
 
@@ -148,6 +156,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
                 ++num_granted;
             }
         } else {
+            log_message("[C]: Enviando RESERVE al agente C pedido");
+
             // Avisamos a otro agente C que queremos reservar un recurso
             sprintf(msg, "RESERVE %lld %s %d\n", job_id, resource, alloc.amount);
             send(agent_fd, msg, strlen(msg), 0);
@@ -178,6 +188,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
     // entonces negamos el trabajo y liberamos los recursos
     // de jobs que se aceptaron
     if (num_granted < erl.num_allocations) {
+        log_message("[C]: Enviando JOB_DENIED al cliente Erlang");
+
         memset(msg, 0, BUFFER_MAX_SIZE - 1);
         sprintf(msg, "JOB_DENIED %lld\n", job_id);
         send(erl.erlang_fd, msg, strlen(msg), 0);
@@ -189,6 +201,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
                     increase_resources(&state->node_resources, alloc.res_kind, alloc.amount);
                 else {
                     if (*(int *)p->data == alloc.agent_fd) {
+                        log_message("[C]: Enviando RELEASE al agente de C al que se le pidió recursos");
+
                         char buffer[BUFFER_MAX_SIZE]  = { 0 };
                         sprintf(buffer, "RELEASE %lld\n", job_id);
                         send(alloc.agent_fd, buffer, strlen(buffer), 0);
@@ -212,6 +226,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
 
     hashmap_put(state->job_map, cell);
 
+    log_message("[C]: Enviando JOB_GRANTED al cliente Erlang");
+
     memset(msg, 0, BUFFER_MAX_SIZE - 1);
     sprintf(msg, "JOB_GRANTED %lld\n", job_id);
     send(erl.erlang_fd, msg, strlen(msg), 0);
@@ -230,6 +246,8 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
         send(erl.erlang_fd, error_buf, strlen(error_buf), 0);
         return;
     }
+
+    log_message("[C]: Procesando liberación de recursos sobre job id %lld", job_id);
 
     // Devolvemos los recursos al nodo que los dio
     increase_resources(&state->node_resources, RES_KIND_CPU,
@@ -268,6 +286,8 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
     long long job_id = erl.job_id;
     JobMapCell *job = hashmap_search(state->job_map, &job_id);
     char buffer[BUFFER_MAX_SIZE] = { 0 };
+
+    log_message("[C]: Procesando un status sobre el job id %lld", job_id);
 
     // Si el job no existe, se le informa al cliente de Erlang
 
@@ -344,6 +364,8 @@ void delete_from_timed_out_jobs(List timed_out_jobs, int id)
 // Maneja una petición del tipo GET_NODES
 void handle_get_nodes(Hashmap node_map, ErlangRequest erl)
 {
+    log_message("[C]: Procesando una petición de tipo GET_NODES");
+
     // Formato: NODES IP:PORT:cpu:NUM1:mem:NUM2:gpu:NUM3;IP:PORT:cpu:NUM4:mem:NUM5:gpu:NUM6; ...
     int buffer_cap = 1024;
     char *buffer = calloc(buffer_cap, sizeof(char));

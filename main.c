@@ -25,6 +25,7 @@
 #include "resources.h"
 #include "agents.h"
 #include "erl.h"
+#include "log/log.h"
 
 int listen_public_sock, listen_erlang_sock;
 int connect_public_sock, connect_erlang_sock;
@@ -98,15 +99,19 @@ int main(int argc, char **argv)
     //  6. Llamar al bucle de epoll
     //  7. Destruir recursos
 
+    log_message("[C]: Inicializando sockets de escucha");
     if (init_sockets() < 0)
         return 1;
 
+    log_message("[C]: Inicializando instancia epoll");
     if (init_epoll() < 0)
         return cleanup(CLEAN_SOCKETS);
 
+    log_message("[C]: Añadiendo descriptores a instancia epoll");
     if (add_descriptors())
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
+    log_message("[C]: Arranque inicial");
     if (startup() < 0)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
@@ -126,9 +131,11 @@ int main(int argc, char **argv)
 
     pthread_join(epoll_thread, NULL);
 
+    log_message("[C]: Cerrando instancia de epoll");
     if (close_epoll() < 0)
         return 1;
 
+    log_message("[C]: Cerrando sockets de escucha");
     if (close_sockets() < 0)
         return 1;
 
@@ -231,7 +238,7 @@ void delete_from_job_queue(JobQueueData *job)
 }
 
 // Inicializa los sockets del agente C, el cliente Erlang
-// y el broadcast UDP
+// el broadcast UDP, y el timer
 int init_sockets(void)
 {
     if (init_agents_socket() < 0)
@@ -243,12 +250,17 @@ int init_sockets(void)
     if (init_udp_socket() < 0)
         return FAIL;
 
+    if (init_timer() < 0)
+        return FAIL;
+
     return OK;
 }
 
 // Inicializa el socket de escucha del agente C
 int init_agents_socket(void)
 {
+    log_message("[C]: Inicializando el socket de escucha entre agentes");
+
     int yes = 1;
     listen_public_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_public_sock < 0) {
@@ -288,6 +300,8 @@ int init_agents_socket(void)
 // Inicializa el socket de escucha del planeador de Erlang
 int init_listen_erlang_socket(void)
 {
+    log_message("[C]: Inicializando el socket de escucha de Erlang");
+
     int yes = 1;
     listen_erlang_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_erlang_sock < 0) {
@@ -327,6 +341,8 @@ int init_listen_erlang_socket(void)
 // Inicializa el socket de broadcast de UDP
 int init_udp_socket(void)
 {
+    log_message("[C]: Inicializando el broadcast UDP");
+
     int yes = 1;
     udp_broadcast_sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp_broadcast_sock < 0) {
@@ -359,6 +375,8 @@ int init_udp_socket(void)
 
 int init_timer(void)
 {
+    log_message("[C]: Inicializando el temporizador");
+
     timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
     if (timer_fd < 0) {
         error("Error intentando crear el temporizador");
@@ -427,6 +445,8 @@ int startup(void)
 // ANNOUNCE <port> cpu:<x> mem:<y> gpu:<z>
 void send_udp_announce(void)
 {
+    log_message("[C]: Enviando ANNOUNCE a los otros agentes");
+
     // Preparamos la configuracion del socket para
     // enviar el mensaje
     struct sockaddr_in sa_broadcast;
@@ -470,7 +490,7 @@ int add_descriptors(void)
 // Maneja eventos de epoll
 void *epoll_handler(void *arg)
 {
-    for (;;) {
+    while (true) {
         num_fds_ready = epoll_wait(epoll_fd, events, EPOLL_MAX_EVENTS, EPOLL_TIMEOUT);
         if (num_fds_ready == -1) {
             error("Error en el bucle de epoll");
@@ -555,6 +575,7 @@ void check_agent_expiration_time(void)
             NodeMapCell *node = (NodeMapCell *)state.node_map->items[i].data;
             double diff = difftime(now, node->time_when_called);
             if (diff >= 15.0) {
+                log_message("[C]: Un nodo no se anunció en 15 segundos. Eliminándolo de la tabla");
                 release_affected_jobs(node, state.node_map,
                                       state.job_map, &state.node_resources);
                 hashmap_delete(state.node_map, node);

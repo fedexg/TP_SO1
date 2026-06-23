@@ -1,6 +1,7 @@
 CC=gcc
 C_SRC=main.c utils.c types.c resources.c erl.c agents.c \
-	  ds/hashmap.c ds/queue.c ds/list.c
+	  ds/hashmap.c ds/queue.c ds/list.c \
+	  log/log.c
 C_OBJ=$(C_SRC:.c=.o)
 C_OUT=agente
 CFLAGS=-Wall -Werror -pthread
@@ -44,6 +45,9 @@ erl.o: erl.c
 	$(CC) -c $^ $(CFLAGS)
 
 agents.o: agents.c
+	$(CC) -c $^ $(CFLAGS)
+
+log.o: log.c
 	$(CC) -c $^ $(CFLAGS)
 
 clean:
