@@ -17,8 +17,10 @@ start() ->
 % - Y el message_manager/3: Que administra la comunicacion Agente C -> Scheduler.%
 % %
 start_scheduler() ->
-    case gen_tcp:connect("localhost",?PORT) of
+    io:fwrite("[Erlang]: Attempting connection to the C Agent~n"),
+    case gen_tcp:connect("localhost",?PORT,[{active, false}]) of
         {ok, Socket} ->
+            io:fwrite("[Erlang]: Successful connection to the C Agent~n"),
             Scheduler_Pid = self(),
             Message_Manager = spawn(?MODULE, message_manager, [Socket, Scheduler_Pid, maps:new()]),
             scheduler_loop(Socket, queue:new(), maps:new(), 1000, Message_Manager);
@@ -56,6 +58,9 @@ scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager) ->
 % Funcion que gestiona la solicitud de trabajo de un determinado cliente de pid Client_Pid.
 % %
 job_manager(Socket, Nodes_Info, Job_Id, Job_Info, Client_Pid) ->
+    receive
+        added_to_map -> ok
+    end,
     Job_Request_Results = check_job_valid(Socket, Nodes_Info, Job_Id, Job_Info),  % <- devuelve un mensaje para que el cliente sepa si su trabajo fue atendido con exito.
     case Job_Request_Results of
         invalid_job ->          %<- El pedido está fuera de los limites admitidos
@@ -74,12 +79,18 @@ message_manager(Socket, Scheduler_Pid, Manager_Map) ->
     receive
         {Job_Id, Job_Manager} -> 
             New_Manager_Map = maps:put(Job_Id, Job_Manager, Manager_Map),
+            Job_Manager ! added_to_map,
             message_manager(Socket, Scheduler_Pid, New_Manager_Map)
-    after 0 ->                                                                          %<- Siempre que el buzon no este vacio, pasa inmediatamente a este bloque.
-            Data = gen_tcp:recv(Socket, 0),                                             %<- Espera a que responda el Agente C.
-            Data_List = string:tokens(Data, "\n"),                                      %<- Previene errores de datapacks al separarlos por '\n'.
-            lists:foreach(fun(Elem) -> job_request_inbox(Socket, Elem, Scheduler_Pid, Manager_Map) end, Data_List), 
-            message_manager(Socket, Scheduler_Pid, Manager_Map)         
+    after 0 ->                                                           %<- Siempre que el buzon no este vacio, pasa inmediatamente a este bloque.
+        case gen_tcp:recv(Socket, 0) of                                  %<- Espera a que responda el Agente C.  
+            {ok, Data} ->
+                io:fwrite("[Erlang]: Data received~n"),                   
+                Data_List = string:tokens(Data, "\n"),                   %<- Previene errores de datapacks al separarlos por '\n'.
+                lists:foreach(fun(Elem) -> job_request_inbox(Socket, Elem, Scheduler_Pid, Manager_Map) end, Data_List), 
+                message_manager(Socket, Scheduler_Pid, Manager_Map);
+            {error, Reason} ->
+                io:fwrite("[Erlang]: Error, reason: ~p~n",[Reason])
+        end
     end.
 % %    
 

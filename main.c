@@ -126,12 +126,11 @@ int main(int argc, char **argv)
     if (pthread_create(&checker_thread, NULL, checker_thread_handler, NULL) < 0)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
-    pthread_join(checker_thread, NULL);
-
     pthread_t epoll_thread;
     if (pthread_create(&epoll_thread, NULL, epoll_handler, NULL) < 0)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
+    pthread_join(checker_thread, NULL);
     pthread_join(epoll_thread, NULL);
 
     log_message("[C]: Cerrando instancia de epoll");
