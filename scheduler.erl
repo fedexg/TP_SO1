@@ -115,7 +115,7 @@ manage_nodes_info(List_Nodes) ->
 % %
 
 fold_node_data(L, Acum, Data_Index) ->
-    Data = string:split(L, ":"),
+    Data = string:tokens(L, ":"),
     NewAcum = Acum + list_to_integer(lists:nth(Data_Index, Data)),
     NewAcum.
 % %
