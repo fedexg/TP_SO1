@@ -589,7 +589,7 @@ void check_agent_expiration_time(void)
     time_t now = time(NULL);
 
     // Buscamos entre los nodos que tenemos y si la última vez
-    // que se anunció fue hace más de 15 segundos, lo eliminamos
+    // que se anunció fue hace más de 15 segundos y no es el nodo local, lo eliminamos
     // y liberamos los recursos de jobs que dependían de él
     for (int i = 0; i < state.node_map->cap; ++i) {
         bool exists_item = state.node_map->items[i].data != NULL &&
@@ -597,7 +597,10 @@ void check_agent_expiration_time(void)
         if (exists_item) {
             NodeMapCell *node = (NodeMapCell *)state.node_map->items[i].data;
             double diff = difftime(now, node->time_when_called);
-            if (diff >= 15.0) {
+            char ip_buffer[BUFFER_MAX_SIZE];
+            get_local_ip(ip_buffer, BUFFER_MAX_SIZE- 1);
+            // 
+            if (diff >= 15.0 && !streq(ip_buffer,node->ip)) { 
                 log_message("[C]: Un nodo no se anunció en 15 segundos. Eliminándolo de la tabla");
                 release_affected_jobs(node, state.node_map,
                                       state.job_map, &state.node_resources);
