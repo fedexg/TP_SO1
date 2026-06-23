@@ -21,9 +21,10 @@ start_scheduler() ->
         {ok, Socket} ->
             Scheduler_Pid = self(),
             Message_Manager = spawn(?MODULE, message_manager, [Socket, Scheduler_Pid, maps:new()]),
-            scheduler_loop(Socket, queue:new(), maps:new(), 1000, Message_Manager).
+            scheduler_loop(Socket, queue:new(), maps:new(), 1000, Message_Manager);
         {error, Reason} ->
-            io:fwrite("[Erlang]: Error, reason: ~p~n",[Reason]).
+            io:fwrite("[Erlang]: Error, reason: ~p~n",[Reason])
+    end.
 % %
 
 scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager) ->

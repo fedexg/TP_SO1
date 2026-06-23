@@ -51,5 +51,8 @@ log.o: log.c
 	$(CC) -c $^ $(CFLAGS)
 
 clean:
+# Limpear .o
 	-rm $(C_OUT)
 	-rm $(C_OBJ)
+# Limpear .beam
+	rm -f *.beam
