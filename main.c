@@ -106,6 +106,8 @@ int main(int argc, char **argv)
     if (init_epoll() < 0)
         return cleanup(CLEAN_SOCKETS);
 
+    printf("%d\n", epoll_fd);
+
     log_message("[C]: Inicializando sockets de escucha");
     if (init_sockets() < 0)
         return 1;
@@ -126,13 +128,13 @@ int main(int argc, char **argv)
     if (pthread_create(&checker_thread, NULL, checker_thread_handler, NULL) < 0)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
-    pthread_join(checker_thread, NULL);
-
     pthread_t epoll_thread;
     if (pthread_create(&epoll_thread, NULL, epoll_handler, NULL) < 0)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
     pthread_join(epoll_thread, NULL);
+    pthread_join(worker_thread, NULL);
+    pthread_join(checker_thread, NULL);
 
     log_message("[C]: Cerrando instancia de epoll");
     if (close_epoll() < 0)
@@ -415,7 +417,7 @@ int init_timer(void)
 // Inicializa la instancia de epoll
 int init_epoll(void)
 {
-    epoll_fd = epoll_create(1);
+    epoll_fd = epoll_create1(0);
     if (epoll_fd < 0) {
         error("Error intentando crear la instancia de epoll");
         return FAIL;
@@ -467,6 +469,8 @@ void send_udp_announce(void)
             state.node_resources.mem,
             state.node_resources.gpu);
 
+    set_socket_nonblocking(udp_broadcast_sock);
+
     // Mandamos el mensaje al socket de broadcast
     // Como es un socket UDP, se utiliza sendto
     ssize_t bytes = sendto(udp_broadcast_sock, buffer, strlen(buffer), 0,
@@ -495,9 +499,10 @@ int add_descriptors(void)
 // Maneja eventos de epoll
 void *epoll_handler(void *arg)
 {
+    log_message("[C]: Corriendo handler de epoll");
     while (true) {
         num_fds_ready = epoll_wait(epoll_fd, events, EPOLL_MAX_EVENTS, EPOLL_TIMEOUT);
-        if (num_fds_ready == -1) {
+	if (num_fds_ready == -1) {
             error("Error en el bucle de epoll");
             exit(EXIT_FAILURE);
         }
@@ -552,6 +557,8 @@ void *epoll_handler(void *arg)
                 read(timer_fd, &expirations, sizeof(long long));
                 check_agent_expiration_time();
             } else {
+                log_message("[C]: Manejando un agente o un cliente Erlang");
+
                 // Manejamos al agente de C como un cliente o
                 // al cliente de Erlang
                 int client_fd = events[i].data.fd;
@@ -598,7 +605,7 @@ void check_agent_expiration_time(void)
 
     // Avisamos que estamos vivos cada cinco segundos
     ++seconds_passed;
-    if (seconds_passed >= 5) {
+    if (seconds_passed >= 1) {
         send_udp_announce();
         seconds_passed = 0;
     }
@@ -614,8 +621,7 @@ void handle_udp_packet(int udp_fd)
     ssize_t bytes_read = recvfrom(udp_fd, buffer, BUFFER_MAX_SIZE - 1, 0,
                                   (struct sockaddr *)&addr,
                                   &addrlen);
-
-    if (bytes_read <= 0)
+    if (bytes_read < 0)
         return;
 
     // Parseamos el mensaje 'ANNOUNCE' que llegue
