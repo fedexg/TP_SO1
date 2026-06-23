@@ -136,7 +136,7 @@ job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
 % %
 
 write_inbox(Data) ->
-    File_Name = "scheduler_log.txt"
+    File_Name = "scheduler_log.txt",
     Data_To_Write = "# El cliente C responde a Erlang:\n\t"++Data++"\n",
     case file:write_file(Filename, Data_To_Write) of
         ok -> 
@@ -150,9 +150,9 @@ write_inbox(Data) ->
 % %
 send_to_agent(Socket, Message_Type, INFO) ->
     case Message_Type of
-        request -> gen_tcp:send(Socket, "JOB_REQUEST "++INFO);
-        status ->  gen_tcp:send(Socket, "JOB_STATUS "++INFO);
-        release -> gen_tcp:send(Socket, "JOB_RELEASE "++INFO),
+        request -> gen_tcp:send(Socket, "JOB_REQUEST "++INFO++"\n");
+        status ->  gen_tcp:send(Socket, "JOB_STATUS "++INFO++"\n");
+        release -> gen_tcp:send(Socket, "JOB_RELEASE "++INFO++"\n"),
                    timer:sleep(5000)
     end.
 % %
@@ -198,7 +198,7 @@ manage_job_info(Socket, List_Nodes, Job_Id, Job_Info) ->
     GPU_TO_ASK = ammout_to_ask(GPU, GPU_LIST, 1),
     String_To_Send = string_of_ip_request(IP_LIST, CPU_TO_ASK,"cpu") ++
                      string_of_ip_request(IP_LIST, MEM_TO_ASK,"mem") ++ string_of_ip_request(IP_LIST, GPU_TO_ASK, "gpu"),
-    send_to_agent(Socket, request, integer_to_list(Job_Id)++" "++String_To_Send).
+    send_to_agent(Socket, request, integer_to_list(Job_Id)++" "++String_To_Send++"\n").
 % %  
 
 map_node_data(L, Data_Index) ->
