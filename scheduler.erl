@@ -96,7 +96,7 @@ message_manager(Socket, Scheduler_Pid, Manager_Map) ->
 % %
 request_nodes_info(Socket) ->
     io:fwrite("[Erlang]: Asking the C agent for the Nodes data~n"),
-    gen_tcp:send(Socket, "GET_NODES"),
+    gen_tcp:send(Socket, "GET_NODES\n"),
     receive
         {nodes, Data} -> parse_node_info(Data) 
     end.    
