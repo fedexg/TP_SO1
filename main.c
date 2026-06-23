@@ -59,6 +59,7 @@ int cleanup(int flags);
 
 int main(int argc, char **argv)
 {
+    srand(time(NULL));
     // Inicializamos el estado global
     pthread_mutex_init(&state.protection.mutex, NULL);
     pthread_cond_init(&state.protection.nonempty_queue_cond, NULL);
@@ -153,6 +154,8 @@ int main(int argc, char **argv)
 void *worker_thread_handler(void *arg)
 {
     while (true) {
+        int sleep_time = rand();
+        sleep(sleep_time%QUEUE_SLEEP_TIME + 1);
         pthread_mutex_lock(&state.protection.mutex);
         while (queue_empty(state.job_queue))
             pthread_cond_wait(&state.protection.nonempty_queue_cond,
