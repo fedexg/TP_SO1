@@ -436,7 +436,7 @@ void send_udp_announce(void)
     sa_broadcast.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 
     char buffer[BUFFER_MAX_SIZE] = { 0 };
-    sprintf(buffer, "ANNOUNCE %d cpu:%d mem:%d gpu:%d",
+    sprintf(buffer, "ANNOUNCE %d cpu:%d mem:%d gpu:%d\n",
             agent_port,
             state.node_resources.cpu,
             state.node_resources.mem,

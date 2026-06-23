@@ -86,7 +86,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
     // no se puede hacer y enviamos TIMEOUT
     if (cpu > res.cpu || mem > res.mem || gpu > res.gpu) {
         memset(msg, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(msg, "JOB_TIMEOUT %lld", job_id);
+        sprintf(msg, "JOB_TIMEOUT %lld\n", job_id);
 
         // Sumamos esta petición a la lista de aquellos que recibieron
         // un TIMEOUT
@@ -145,7 +145,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
             }
         } else {
             // Avisamos a otro agente C que queremos reservar un recurso
-            sprintf(msg, "RESERVE %lld %s %d", job_id, resource, alloc.amount);
+            sprintf(msg, "RESERVE %lld %s %d\n", job_id, resource, alloc.amount);
             send(agent_fd, msg, strlen(msg), 0);
 
             // Contamos la cantidad de GRANTEDs que recibimos de parte del agente C
@@ -175,7 +175,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
     // de jobs que se aceptaron
     if (num_granted < erl.num_allocations) {
         memset(msg, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(msg, "JOB_DENIED %lld", job_id);
+        sprintf(msg, "JOB_DENIED %lld\n", job_id);
         send(erl.erlang_fd, msg, strlen(msg), 0);
 
         for (ListNode *p = agent_fds; p != NULL; p = p->next) {
@@ -186,7 +186,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
                 else {
                     if (*(int *)p->data == alloc.agent_fd) {
                         char buffer[BUFFER_MAX_SIZE]  = { 0 };
-                        sprintf(buffer, "RELEASE %lld", job_id);
+                        sprintf(buffer, "RELEASE %lld\n", job_id);
                         send(alloc.agent_fd, buffer, strlen(buffer), 0);
                     }
                 }
@@ -209,7 +209,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
     hashmap_put(state->job_map, cell);
 
     memset(msg, 0, BUFFER_MAX_SIZE - 1);
-    sprintf(msg, "JOB_GRANTED %lld", job_id);
+    sprintf(msg, "JOB_GRANTED %lld\n", job_id);
     send(erl.erlang_fd, msg, strlen(msg), 0);
 }
 
@@ -279,13 +279,13 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
 
     if (job != NULL) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(buffer, "JOB_GRANTED %lld", job_id);
+        sprintf(buffer, "JOB_GRANTED %lld\n", job_id);
     } else if (find_in_queue(state->job_queue, job_id)) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(buffer, "JOB_DENIED %lld", job_id);
+        sprintf(buffer, "JOB_DENIED %lld\n", job_id);
     } else if (find_in_list(state->timed_out_jobs, job_id)) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(buffer, "JOB_TIMEOUT %lld", job_id);
+        sprintf(buffer, "JOB_TIMEOUT %lld\n", job_id);
         delete_from_timed_out_jobs(state->timed_out_jobs, job_id);
     }
 
@@ -397,7 +397,7 @@ void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job
 
     // Preparamos y enviamos el mensaje
     char release_msg[BUFFER_MAX_SIZE];
-    snprintf(release_msg, sizeof(release_msg), "RELEASE %lld %s %d", job_id, resource, amount);
+    snprintf(release_msg, sizeof(release_msg), "RELEASE %lld %s %d\n", job_id, resource, amount);
     send(fd, release_msg, strlen(release_msg), 0);
 
     // ¡No cerramos fd para que se quede en la instancia de epoll!
