@@ -10,12 +10,10 @@ default:
 	@echo "Error: se debe elegir qué compilar; make agente o make scheduler"
 
 scheduler:
-	erlc scheduler.erl
 	@erl -noshell -run scheduler start -s init
 	
-schedulerTEST:
-	erlc schedulerTEST.erl
-	@erl -noshell -run schedulerTEST start -s init
+scheduler_test:
+	@erl -noshell -run scheduler_test start -s init
 
 agente: $(C_OBJ)
 	$(CC) -o $(C_OUT) $(CFLAGS) $(C_OBJ)

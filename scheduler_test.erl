@@ -1,4 +1,4 @@
--module(schedulerTEST).
+-module(scheduler_test).
 -export([start/0]).
 
 -export([start_scheduler/0, scheduler_loop/5, job_manager/5, message_manager/3, start_not_agent/0]).
