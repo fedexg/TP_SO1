@@ -154,7 +154,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
 
             // Contamos la cantidad de GRANTEDs que recibimos de parte del agente C
             char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
-            read_full_line(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1, 0);
+            read_full_line(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1);
 
             // Con saber que recibimos GRANTED podemos guardar los recursos;
             // no necesitamos el job_id en este caso
