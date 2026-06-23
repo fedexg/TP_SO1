@@ -26,12 +26,13 @@ int get_agent_connection(const char *ip, int port, int epoll_fd);
 // Manejar requests (si es posible) proveniente de un cliente Erlang
 void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
 {
-    log_message("[C]: Procesando cliente Erlang");
+    log_message("[C]: Procesando cliente Erlang con descriptor %d", erlang_fd);
     char buffer[BUFFER_MAX_SIZE] = { 0 };
 
     // Leemos el mensaje que nos envía el cliente Erlang
     ssize_t bytes_read = read_full_line(erlang_fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read < 0) {
+
         // Error de lectura
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
@@ -43,12 +44,18 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
         // Falta que lleguen datos
         return;
     else {
-        log_message("[C]: Procesando petición enviada por un cliente Erlang");
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
+        if (streq(request_fields[0], "GET_NODES\n")) {
+            handle_get_nodes(state->node_map, erlang_fd);
+            return;
+        }
+
         ErlangRequest erl = parse_erlang_request(state->node_map,
                                                  request_fields,
                                                  length, erlang_fd);
+
+        log_message("[C]: Procesando petición enviada por un cliente Erlang con job_id %lld", erl.job_id);
 
         // Manejamos el tipo de petición que se nos hizo
         if (streq(request_fields[0], "JOB_REQUEST"))
@@ -57,8 +64,6 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
             handle_job_release(erl, epoll_fd, state);
         else if (streq(request_fields[0], "JOB_STATUS"))
             handle_job_status(erl, state);
-        else if (streq(request_fields[0], "GET_NODES"))
-            handle_get_nodes(state->node_map, erl);
         else { // Si no es una petición que conozcamos,
                // informamos que es desconocida
             log_message("[C]: Petición desconocida recibida: %s", request_fields[0]);
@@ -363,7 +368,7 @@ void delete_from_timed_out_jobs(List timed_out_jobs, int id)
 }
 
 // Maneja una petición del tipo GET_NODES
-void handle_get_nodes(Hashmap node_map, ErlangRequest erl)
+void handle_get_nodes(Hashmap node_map, int erlang_fd)
 {
     log_message("[C]: Procesando una petición de tipo GET_NODES");
 
@@ -401,7 +406,7 @@ void handle_get_nodes(Hashmap node_map, ErlangRequest erl)
 
     // Enviamos la información de todos los nodos en el cluster
     // y liberamos el mensaje
-    send(erl.erlang_fd, buffer, strlen(buffer), 0);
+    send(erlang_fd, buffer, strlen(buffer), 0);
     free(buffer);
 }
 

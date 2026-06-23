@@ -504,7 +504,7 @@ void *epoll_handler(void *arg)
 
         for (int i = 0; i < num_fds_ready; ++i) {
             if (events[i].data.fd == listen_public_sock) {
-                log_message("[C]: Manejando evento de socket de escucha de agentes");
+                log_message("[C]: Recibiendo evento de agente C");
 
                 // Creamos un socket de conexión al agente de C
                 // para enviar y recibir mensajes
@@ -522,7 +522,7 @@ void *epoll_handler(void *arg)
                 if (add_descriptor(epoll_fd, connect_public_sock, &ev) < 0)
                     exit(EXIT_FAILURE);
             } else if (events[i].data.fd == listen_erlang_sock) {
-                log_message("[C]: Manejando evento de socket de escucha de cliente Erlang");
+                log_message("[C]: Recibiendo evento de Erlang");
 
                 // Creamos un socket de conexión al cliente de Erlang
                 // para enviar y recibir mensajes
@@ -545,8 +545,6 @@ void *epoll_handler(void *arg)
                 // Si es el socket de broadcast, lo manejamos por separado
                 handle_udp_packet(events[i].data.fd);
             } else if (events[i].data.fd == timer_fd) {
-                log_message("[C]: Manejando evento de temporizador");
-
                 // Chequeamos si el tiempo de un agente expiró
                 long long expirations = 0;
                 read(timer_fd, &expirations, sizeof(long long));
