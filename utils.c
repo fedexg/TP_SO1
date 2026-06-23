@@ -94,3 +94,34 @@ int add_descriptor(int epoll_fd, int fd, struct epoll_event *ev)
 
     return OK;
 }
+
+// Lee hasta \n en un stream de datos dado por fd
+ssize_t read_full_line(int fd, char *buffer, int max_size)
+{
+    ssize_t total = 0;
+    while (total < max_size - 1) {
+        char c;
+
+        // Leemos byte por byte
+        ssize_t bytes = recv(fd, &c, 1, 0);
+
+        // Ocurre una desconexión?
+        if (bytes == 0)
+            return -1;
+
+        if (bytes < 0) {
+            // Entonces no hay datos o no se llegó a '\n'
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                return 0;
+
+            return -1;
+        }
+
+        buffer[total++] = c;
+        if (c == '\n')
+            break;
+    }
+
+    buffer[total] = '\0';
+    return total;
+}

@@ -23,7 +23,7 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
     memset(buffer, 0, BUFFER_MAX_SIZE);
 
     // Leemos el mensaje que nos envía el agente de C
-    ssize_t bytes_read = read(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
+    ssize_t bytes_read = read_full_line(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read <= 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
@@ -63,10 +63,10 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             give_resources(&state->node_resources, req.res_kind, req.amount);
 
             // Se pudo reservar recursos, así que enviamos GRANTED
-            sprintf(response_to_agent, "GRANTED %lld", req.job_id);
+            sprintf(response_to_agent, "GRANTED %lld\n", req.job_id);
             send(c_agent_fd, response_to_agent, 8, 0);
         } else { // En caso contrario, enviamos DENIED
-            sprintf(response_to_agent, "DENIED %lld", req.job_id);
+            sprintf(response_to_agent, "DENIED %lld\n", req.job_id);
             send(c_agent_fd, response_to_agent, 8, 0);
         }
 
@@ -79,7 +79,7 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 
         // No encontramos un trabajo con ese id, así que enviamos DENIED
         if (cell == NULL) {
-            sprintf(response_to_agent, "DENIED %lld", req.job_id);
+            sprintf(response_to_agent, "DENIED %lld\n", req.job_id);
             send(c_agent_fd, response_to_agent, 8, 0);
             return;
         }
