@@ -40,7 +40,7 @@ scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager) ->
         _ -> receive
                     {new_job, Client_Id, Job_Info_Recv} -> 
                         New_Job_Queue = queue:in({N, Job_Info_Recv},Job_Queue),     % <- Encola el JOB con su id unico.
-                        New_Client_Map = maps:add(N, Client_Id, Client_Map),        % <- Agrega en el diccionario el JOB asignado al cliente.
+                        New_Client_Map = maps:put(N, Client_Id, Client_Map),        % <- Agrega en el diccionario el JOB asignado al cliente.
                         Client_Id ! {given_jobid, N},                               % <- Confirma al cliente el almacenamiento de su pedido a la cola.  
                         scheduler_loop(Socket, New_Job_Queue, New_Client_Map, N+1, Message_Manager); 
                     {job_finished, Job_Id} ->
@@ -72,7 +72,7 @@ job_manager(Socket, Nodes_Info, Job_Id, Job_Info, Client_Pid) ->
 message_manager(Socket, Scheduler_Pid, Manager_Map) ->
     receive
         {Job_Id, Job_Manager} -> 
-            New_Manager_Map = maps:add(Job_Id, Job_Manager, Manager_Map),
+            New_Manager_Map = maps:put(Job_Id, Job_Manager, Manager_Map),
             message_manager(Socket, Scheduler_Pid, New_Manager_Map)
     after 0 ->                                                                          %<- Siempre que el buzon no este vacio, pasa inmediatamente a este bloque.
             Data = gen_tcp:recv(Socket, 0),                                             %<- Espera a que responda el Agente C.
