@@ -355,7 +355,7 @@ int init_udp_socket(void)
     }
 
     // Seteamos para que sea un socket de broadcast
-    if (setsockopt(udp_broadcast_sock, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes)) < 0) {
+    if (setsockopt(udp_broadcast_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT | SO_BROADCAST, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket de UDP para permitir broadcast");
         return FAIL;
     }
@@ -364,8 +364,10 @@ int init_udp_socket(void)
     struct sockaddr_in sa_udp;
     memset(&sa_udp, 0, sizeof(sa_udp));
     sa_udp.sin_family = AF_INET;
-    sa_udp.sin_port = htons(UDP_PORT);
     sa_udp.sin_addr.s_addr = htonl(INADDR_ANY);
+    sa_udp.sin_port = htons(UDP_PORT);
+
+    set_socket_nonblocking(udp_broadcast_sock);
 
     if (bind(udp_broadcast_sock, (struct sockaddr *)&sa_udp, sizeof(sa_udp)) < 0) {
         error("Error intentando asignar una dirección al broadcast");
@@ -373,7 +375,6 @@ int init_udp_socket(void)
         return FAIL;
     }
 
-    set_socket_nonblocking(udp_broadcast_sock);
     return OK;
 }
 
@@ -390,11 +391,11 @@ int init_timer(void)
     struct itimerspec expiration = { 0 };
 
     // Chequeo de primer expiración
-    expiration.it_value.tv_sec = 5;
+    expiration.it_value.tv_sec = 1;
     expiration.it_value.tv_nsec = 0;
 
     // Chequeo periódico de expiración
-    expiration.it_interval.tv_sec = 5;
+    expiration.it_interval.tv_sec = 1;
     expiration.it_value.tv_nsec = 0;
 
     if (timerfd_settime(timer_fd, 0, &expiration, NULL) < 0) {
@@ -414,7 +415,7 @@ int init_timer(void)
 // Inicializa la instancia de epoll
 int init_epoll(void)
 {
-    epoll_fd = epoll_create(1);
+    epoll_fd = epoll_create1(0);
     if (epoll_fd < 0) {
         error("Error intentando crear la instancia de epoll");
         return FAIL;
@@ -457,7 +458,7 @@ void send_udp_announce(void)
     memset(&sa_broadcast, 0, sizeof(sa_broadcast));
     sa_broadcast.sin_family = AF_INET;
     sa_broadcast.sin_port = htons(agent_port);
-    sa_broadcast.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+    sa_broadcast.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     char buffer[BUFFER_MAX_SIZE] = { 0 };
     sprintf(buffer, "ANNOUNCE %d cpu:%d mem:%d gpu:%d\n",
@@ -606,6 +607,7 @@ void check_agent_expiration_time(void)
 // Maneja mensajes ANNOUNCE
 void handle_udp_packet(int udp_fd)
 {
+    log_message("[C]: Intentando procesar ANNOUNCE");
     char buffer[BUFFER_MAX_SIZE] = { 0 };
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
@@ -651,6 +653,7 @@ void handle_udp_packet(int udp_fd)
     node->resources = resources;
     node->time_when_called = time(NULL);
     hashmap_put(state.node_map, node);
+    log_message("[C]: Se encontró el nodo %s:%d", node->ip, node->port);
 
     free(fields);
 }
