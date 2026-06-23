@@ -2,3 +2,4 @@ a.out
 agente
 *.beam
 *.o
+scheduler_log.txt
