@@ -47,8 +47,7 @@ void hashmap_put(Hashmap hm, void *data)
     int idx = find_index(hm, data);
 
     if (idx != -1) {
-        hm->free(hm->items[idx].data);
-        hm->items[idx].data = hm->copy(data);
+        pthread_mutex_unlock(&hm->mutex);
         return;
     }
 
@@ -61,8 +60,10 @@ void hashmap_put(Hashmap hm, void *data)
         i = (i + 1) % hm->cap;
     } while (i != idx && !free_cell);
 
-    if (!free_cell)
+    if (!free_cell) {
+        pthread_mutex_unlock(&hm->mutex);
         return;
+    }
 
     int index = (i > 0)? (i - 1) : 0;
     hm->items[index].data = hm->copy(data);
@@ -92,6 +93,7 @@ void hashmap_delete(Hashmap hm, void *data)
         hm->items[idx].deleted = 1;
         --hm->num_items;
     }
+
     pthread_mutex_unlock(&hm->mutex);
 }
 
