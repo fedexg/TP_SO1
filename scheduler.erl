@@ -23,7 +23,7 @@ start_scheduler() ->
             Message_Manager = spawn(?MODULE, message_manager, [Socket, Scheduler_Pid, maps:new()]),
             scheduler_loop(Socket, queue:new(), maps:new(), 1000, Message_Manager).
         {error, Reason} ->
-            io:fwrite("Error, reason: ~p~n",[Reason]).
+            io:fwrite("[Erlang]: Error, reason: ~p~n",[Reason]).
 % %
 
 scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager) ->
@@ -139,7 +139,7 @@ job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
                                     send_to_agent(Socket, status, hd(Job_Id)); 
         ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" was timeouted by the C agent~n"),
                                     maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! invalid_job;
-        Any -> io:fwrite("Command error: ~p~n", [Any])
+        Any -> io:fwrite("[Erlang]: Command error: ~p~n", [Any])
     end.
 % %
 
@@ -148,9 +148,9 @@ write_inbox(Data) ->
     Data_To_Write = "# Agent C responce to Erlang Scheduler:\n\t"++Data++"\n",
     case file:write_file(File_Name, Data_To_Write) of
         ok -> 
-            io:format("Written Inbox in the Log.~n");
+            io:format("[Erlang]: Written Inbox in the Log.~n");
         {error, Reason} -> 
-            io:format("Failed to write file: ~p~n", [Reason])
+            io:format("[Erlang]: Failed to write file: ~p~n", [Reason])
     end.
 % %
 
