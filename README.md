@@ -33,6 +33,7 @@ este pueda liberar esos recursos.
 - Uso de conexiones epoll para gestionar un número ilimitado de conexiones TCP de forma no bloqueante;
 - Conexión de múltiples nodos y procesos independientes;
 - Estrategia de prevención y manejo de deadlocks mediante uso de timeouts.
+- Concurrencia en el manejo simulado de solicitudes de trabajo.
      
 ## Cómo usarlo
 ```sh
