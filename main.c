@@ -92,7 +92,7 @@ int main(int argc, char **argv)
         agent_port = atoi(argv[1]);
 
     // Estructura del programa:
-    //  1. Inicializar sockets e instancia de epoll
+    //  1. Inicializar instancia de epoll y sockets
     //  2. Añadir sockets de escucha y broadcast a la instancia de epoll
     //  3. Arranque inicial del cliente
     //  4. Llamar al thread que maneja requests
@@ -100,13 +100,13 @@ int main(int argc, char **argv)
     //  6. Llamar al bucle de epoll
     //  7. Destruir recursos
 
-    log_message("[C]: Inicializando sockets de escucha");
-    if (init_sockets() < 0)
-        return 1;
-
     log_message("[C]: Inicializando instancia epoll");
     if (init_epoll() < 0)
         return cleanup(CLEAN_SOCKETS);
+
+    log_message("[C]: Inicializando sockets de escucha");
+    if (init_sockets() < 0)
+        return 1;
 
     log_message("[C]: Añadiendo descriptores a instancia epoll");
     if (add_descriptors())
@@ -386,7 +386,7 @@ int init_timer(void)
         return FAIL;
     }
 
-    struct itimerspec expiration;
+    struct itimerspec expiration = { 0 };
 
     // Chequeo de primer expiración
     expiration.it_value.tv_sec = 5;
