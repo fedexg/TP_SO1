@@ -27,15 +27,19 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
     char buffer[BUFFER_MAX_SIZE] = { 0 };
 
     // Leemos el mensaje que nos envía el cliente Erlang
-    ssize_t bytes_read = read(erlang_fd, buffer, BUFFER_MAX_SIZE - 1);
-    if (bytes_read <= 0) {
+    ssize_t bytes_read = read_full_line(erlang_fd, buffer, BUFFER_MAX_SIZE - 1);
+    if (bytes_read < 0) {
+        // Error de lectura
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
 
         error("Error intentando leer de un cliente Erlang");
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, erlang_fd, NULL);
         close(erlang_fd);
-    } else {
+    } else if (bytes_read == 0)
+        // Falta que lleguen datos
+        return;
+    else {
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
         ErlangRequest erl = parse_erlang_request(state->node_map,

@@ -23,7 +23,7 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
     memset(buffer, 0, BUFFER_MAX_SIZE);
 
     // Leemos el mensaje que nos envía el agente de C
-    ssize_t bytes_read = read(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
+    ssize_t bytes_read = read_full_line(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read <= 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
