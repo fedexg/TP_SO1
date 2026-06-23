@@ -26,6 +26,7 @@ int get_agent_connection(const char *ip, int port, int epoll_fd);
 // Manejar requests (si es posible) proveniente de un cliente Erlang
 void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
 {
+    log_message("[C]: Procesando cliente Erlang");
     char buffer[BUFFER_MAX_SIZE] = { 0 };
 
     // Leemos el mensaje que nos envía el cliente Erlang

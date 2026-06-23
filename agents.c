@@ -21,6 +21,7 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
 // Si ocurre una desconexión inesperada, se toma en cuenta
 void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
 {
+    log_message("[C]: Procesando agente C como cliente");
     char buffer[BUFFER_MAX_SIZE];
     memset(buffer, 0, BUFFER_MAX_SIZE);
 
