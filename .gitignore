@@ -3,3 +3,4 @@ agente
 *.beam
 *.o
 scheduler_log.txt
+agente_for_script

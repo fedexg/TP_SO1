@@ -6,6 +6,7 @@
 #define UDP_PORT     12529
 #define ERLANG_PORT  1337
 #define DEFAULT_PORT 8080
+#define DEFAULT_ERLANG_PORT 1337
 
 #define EPOLL_MAX_EVENTS     10
 #define EPOLL_TIMEOUT        -1
