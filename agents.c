@@ -12,6 +12,8 @@
 #include "types.h"
 #include "erl.h"
 
+#include "log/log.h"
+
 void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
                                      LocalResources *node_resources, int fd);
 
@@ -36,6 +38,8 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
         close(c_agent_fd);
     } else {
         // Procesamos la petición que nos hizo
+        log_message("[C]: Procesando petición enviada por un agente C");
+
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
         Request request = parse_request(request_fields, length);
@@ -50,6 +54,8 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
     char response_to_agent[128] = {0};
     switch (req.kind) {
     case REQUEST_KIND_RESERVE:
+        log_message("[C]: Procesando petición de tipo RESERVE sobre job id %lld", req.job_id);
+
         // Chequeamos que podemos reservar recursos
         if (exists_resource(&state->node_resources, req.res_kind, req.amount)) {
             JobMapCell *cell = hashmap_search(state->job_map, &req.job_id);
@@ -63,9 +69,11 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             give_resources(&state->node_resources, req.res_kind, req.amount);
 
             // Se pudo reservar recursos, así que enviamos GRANTED
+            log_message("[C]: Enviando GRANTED al agente con descriptor %d", c_agent_fd);
             sprintf(response_to_agent, "GRANTED %lld\n", req.job_id);
             send(c_agent_fd, response_to_agent, 8, 0);
         } else { // En caso contrario, enviamos DENIED
+            log_message("[C]: Enviando DENIED al agente con descriptor %d", c_agent_fd);
             sprintf(response_to_agent, "DENIED %lld\n", req.job_id);
             send(c_agent_fd, response_to_agent, 8, 0);
         }
@@ -73,12 +81,15 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
         break;
 
     case REQUEST_KIND_RELEASE:
+        log_message("[C]: Procesando petición de tipo RELEASE sobre job id %lld", req.job_id);
+
         // Retomamos los recursos que dimos al agente que pidió recursos
         increase_resources(&state->node_resources, req.res_kind, req.amount);
         JobMapCell *cell = hashmap_search(state->job_map, &req.job_id);
 
         // No encontramos un trabajo con ese id, así que enviamos DENIED
         if (cell == NULL) {
+            log_message("[C]: Enviando DENIED al agente con descriptor %d", c_agent_fd);
             sprintf(response_to_agent, "DENIED %lld\n", req.job_id);
             send(c_agent_fd, response_to_agent, 8, 0);
             return;
@@ -91,10 +102,13 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
         give_resources(&cell->granted_resources, req.res_kind, req.amount);
         if (cell->granted_resources.current_cpu == 0 && cell->granted_resources.current_gpu == 0 &&
             cell->granted_resources.current_mem == 0) {
+            log_message("[C]: El job no tiene más recursos que pedir; eliminando job de la tabla de nodos");
             hashmap_delete(state->job_map, &req.job_id);
             free(cell);
-        } else
+        } else {
+            log_message("[C]: Actualizando job en la tabla de nodos");
             hashmap_put(state->job_map, &cell);
+        }
 
         // Atendemos solicitudes encoladas en orden
         while (!queue_empty(state->job_queue)) {
@@ -118,6 +132,8 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
                            LocalResources *node_resources)
 {
+    log_message("[C]: Liberando jobs dependientes del nodo con IP %s:%s", node->ip, node->port);
+
     // Buscamos jobs que dependan de node, y si es así, liberamos sus recursos
     // y los sacamos de la tabla de trabajos
     for (int i = 0; i < job_map->cap; ++i) {
@@ -189,6 +205,8 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
             }
         }
     }
+
+    log_message("[C]: Manejando conexión inesperada del nodo %s:%s", dead_node->ip, dead_node->port);
 
     // No hay desconexión inesperada; proseguimos
     if (dead_node == NULL)
