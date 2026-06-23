@@ -131,7 +131,7 @@ job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
     write_inbox(Data),
     case string:split(Data, " ") of
         ["NODES" | String_Nodes] -> io:fwrite("[Erlang]: Node data received from the C agent~n"),
-                                    Scheduler_Pid ! String_Nodes;
+                                    Scheduler_Pid ! {nodes, String_Nodes};
         ["JOB_GRANTED" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" was granted by the C agent~n"),
                                     maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! valid_job;  %maps:get(list_to_integer(hd(Job_Id)),Manager_Map) == Job_Manager Pid
         ["JOB_DENIED" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" is on the queue by the C agent~n"),
