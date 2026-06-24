@@ -20,10 +20,10 @@ typedef struct _LocalResources {
 } LocalResources;
 
 // Informacion con respecto a la conexion en la red
-typedef struct ConnectionInfo{
-    char* ip;
+typedef struct ConnectionInfo {
+    char *ip;
     int port;
-}ConnectionInfo;
+} ConnectionInfo;
 
 // Guarda los recursos alocados en un nodo remoto
 typedef struct _RemoteAllocation {
@@ -86,6 +86,7 @@ typedef struct MutexCond {
 
 // Guarda el estado global del agente
 typedef struct AgentState {
+    int agent_port;
     LocalResources node_resources;
     Hashmap node_map, job_map;
     Queue job_queue;

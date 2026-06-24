@@ -91,18 +91,21 @@ int main(int argc, char **argv)
     else
         agent_port = atoi(argv[1]);
 
+    state.agent_port = agent_port;
+
+    // Nos insertamos en la tabla de nodos
     char ip_buffer[BUFFER_MAX_SIZE];
     get_local_ip(ip_buffer, BUFFER_MAX_SIZE);
 
-    NodeMapCell* local_node = malloc(sizeof(NodeMapCell));
+    NodeMapCell *local_node = malloc(sizeof(NodeMapCell));
     local_node->node_connection_info.ip = strdup(ip_buffer);
     local_node->node_connection_info.port = agent_port;
     local_node->resources = state.node_resources;
     local_node->socket_fd = -1;
     local_node->time_when_called = time(NULL);
 
-    hashmap_put(state.node_map,local_node);
-    
+    hashmap_put(state.node_map, local_node);
+
     log_message("[C]: Inicializando agente en el puerto %d", agent_port);
 
     // Estructura del programa:
@@ -116,11 +119,11 @@ int main(int argc, char **argv)
 
     log_message("[C]: Inicializando instancia epoll");
     if (init_epoll() < 0)
-        return cleanup(CLEAN_SOCKETS);
+        return 1;
 
     log_message("[C]: Inicializando sockets de escucha");
     if (init_sockets() < 0)
-        return 1;
+        return cleanup(CLEAN_SOCKETS);
 
     log_message("[C]: Añadiendo descriptores a instancia epoll");
     if (add_descriptors())
