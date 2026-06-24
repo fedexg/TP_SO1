@@ -16,9 +16,9 @@
 
 #include "log/log.h"
 
-bool find_in_queue(Queue queue, int id);
-bool find_in_list(List list, int id);
-void delete_from_timed_out_jobs(List timed_out_jobs, int id);
+bool find_in_queue(Queue queue, long long id);
+bool find_in_list(List list, long long id);
+void delete_from_timed_out_jobs(List timed_out_jobs, long long id);
 void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job_id,
                             const char *resource, int amount, int epoll_fd);
 int get_agent_connection(const char *ip, int port, int epoll_fd);
@@ -54,6 +54,7 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
         }
 
         ErlangRequest erl = parse_erlang_request(state->node_map,
+                                                 state->agent_port,
                                                  request_fields,
                                                  length, erlang_fd);
 
@@ -157,6 +158,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
         // tomamos nuestros propios recursos, y lo consideramos GRANTED
         if (streq(alloc.erlang_connection_info.ip, my_ip) &&
                 alloc.erlang_connection_info.port == state->agent_port) {
+            log_message("[C]: Tomando recursos de nosotros mismos");
             if (exists_resource(&state->node_resources, alloc.res_kind, alloc.amount)) {
                 give_resources(&state->node_resources, alloc.res_kind, alloc.amount);
                 increase_resources(&local, alloc.res_kind, alloc.amount);
@@ -181,9 +183,9 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
                 if (alloc.res_kind == RES_KIND_CPU)
                     remote_allocs[num_granted].resources.current_cpu += alloc.amount;
                 if (alloc.res_kind == RES_KIND_MEM)
-                    remote_allocs[num_granted].resources.current_gpu += alloc.amount;
-                if (alloc.res_kind == RES_KIND_GPU)
                     remote_allocs[num_granted].resources.current_mem += alloc.amount;
+                if (alloc.res_kind == RES_KIND_GPU)
+                    remote_allocs[num_granted].resources.current_gpu += alloc.amount;
 
                 ++num_granted;
                 agent_fds = list_append(agent_fds, &agent_fd, (ListCpyFunc)int_copy);
@@ -326,7 +328,7 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
 }
 
 // Determina si id está en queue
-bool find_in_queue(Queue queue, int id)
+bool find_in_queue(Queue queue, long long id)
 {
     for (QueueNode* actual_node = queue; actual_node != NULL; actual_node = actual_node->next) {
         JobQueueData *job = (JobQueueData *)actual_node->data;
@@ -338,10 +340,10 @@ bool find_in_queue(Queue queue, int id)
 }
 
 // Determina si id está en list
-bool find_in_list(List list, int id)
+bool find_in_list(List list, long long id)
 {
     for (ListNode *actual_node = list; actual_node != NULL; actual_node = actual_node->next) {
-        int job_id = *(int *)actual_node->data;
+        long long job_id = *(long long *)actual_node->data;
         if (job_id == id)
             return true;
     }
@@ -350,16 +352,16 @@ bool find_in_list(List list, int id)
 }
 
 // Elimina un job que recibió un TIMEOUT con id 'id'
-void delete_from_timed_out_jobs(List timed_out_jobs, int id)
+void delete_from_timed_out_jobs(List timed_out_jobs, long long id)
 {
     ListNode *node_before = timed_out_jobs;
-    if (*(int*)node_before->data == id){
+    if (*(long long *)node_before->data == id){
         free(node_before->data);
         timed_out_jobs = timed_out_jobs->next;
         free(node_before);
     } else {
         ListNode *actual_node = timed_out_jobs->next;
-        for(; *(int*)actual_node->data != id && actual_node != NULL; actual_node = actual_node->next)
+        for(; *(long long *)actual_node->data != id && actual_node != NULL; actual_node = actual_node->next)
             node_before = node_before->next;
         if (actual_node != NULL) {
             node_before->next = actual_node->next;
