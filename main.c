@@ -98,8 +98,8 @@ int main(int argc, char **argv)
     get_local_ip(ip_buffer, BUFFER_MAX_SIZE);
 
     NodeMapCell *local_node = malloc(sizeof(NodeMapCell));
-    local_node->node_connection_info.ip = strdup(ip_buffer);
-    local_node->node_connection_info.port = agent_port;
+    local_node->connection_info.ip = strdup(ip_buffer);
+    local_node->connection_info.port = agent_port;
     local_node->resources = state.node_resources;
     local_node->socket_fd = -1;
     local_node->time_when_called = time(NULL);
@@ -603,7 +603,7 @@ void check_agent_expiration_time(void)
             char ip_buffer[BUFFER_MAX_SIZE];
             get_local_ip(ip_buffer, BUFFER_MAX_SIZE- 1);
             // 
-            if (diff >= 15.0 && !streq(ip_buffer,node->node_connection_info.ip)) { 
+            if (diff >= 15.0 && !streq(ip_buffer,node->connection_info.ip)) { 
                 log_message("[C]: Un nodo no se anunció en 15 segundos. Eliminándolo de la tabla");
                 release_affected_jobs(node, state.node_map,
                                       state.job_map, &state.node_resources);
@@ -650,8 +650,8 @@ void handle_udp_packet(int udp_fd)
     // lo creamos para luego sumarlo
     if (node == NULL) {
         node = malloc(sizeof(NodeMapCell));
-        node->node_connection_info.ip = inet_ntoa(addr.sin_addr);
-        node->node_connection_info.port = atoi(fields[1]);
+        node->connection_info.ip = inet_ntoa(addr.sin_addr);
+        node->connection_info.port = atoi(fields[1]);
         node->socket_fd = -1;
     }
 
@@ -669,7 +669,7 @@ void handle_udp_packet(int udp_fd)
     node->resources = resources;
     node->time_when_called = time(NULL);
     hashmap_put(state.node_map, node);
-    log_message("[C]: Se encontró el nodo %s:%d", node->node_connection_info.ip, node->node_connection_info.port);
+    log_message("[C]: Se encontró el nodo %s:%d", node->connection_info.ip, node->connection_info.port);
 
     free(fields);
 }

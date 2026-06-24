@@ -388,8 +388,8 @@ void handle_get_nodes(Hashmap node_map, int erlang_fd)
             NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
             char node_buffer[1024] = { 0 };
             snprintf(node_buffer, sizeof(node_buffer), "%s:%d:cpu:%d:mem:%d:gpu:%d;",
-                     node->node_connection_info.ip,
-                     node->node_connection_info.port,
+                     node->connection_info.ip,
+                     node->connection_info.port,
                      node->resources.cpu,
                      node->resources.mem,
                      node->resources.gpu);
@@ -423,7 +423,7 @@ void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job
         return;
 
     // Intentamos buscar su descriptor de archivo para enviar el mensaje
-    int fd = get_agent_connection(target_node->node_connection_info.ip, target_node->node_connection_info.port, epoll_fd);
+    int fd = get_agent_connection(target_node->connection_info.ip, target_node->connection_info.port, epoll_fd);
     if (fd == -1) {
         error("Error intentando conectarse a un nodo");
         return;

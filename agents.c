@@ -134,8 +134,8 @@ void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
                            LocalResources *node_resources)
 {
     log_message("[C]: Liberando jobs dependientes del nodo con IP %s:%s",
-                node->node_connection_info.ip,
-                node->node_connection_info.port);
+                node->connection_info.ip,
+                node->connection_info.port);
 
     // Buscamos jobs que dependan de node, y si es así, liberamos sus recursos
     // y los sacamos de la tabla de trabajos
@@ -149,7 +149,7 @@ void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
             for (int j = 0; j < job->num_remotely_allocated; ++j) {
                 RemoteAllocation *remote = &job->remote_allocations[j];
                 if (streq(remote->connection_info.ip,
-                          node->node_connection_info.ip) &&
+                          node->connection_info.ip) &&
                         ((remote->resources.current_cpu > 0) ||
                         (remote->resources.current_mem > 0)  ||
                         (remote->resources.current_gpu > 0))) {
@@ -165,7 +165,7 @@ void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
 
                     // Si no está muerto, restauramos los recursos
                     if (!streq(remote->connection_info.ip,
-                               node->node_connection_info.ip)) {
+                               node->connection_info.ip)) {
                         NodeMapCell *alive_node = hashmap_search(node_map, &remote->connection_info);
                         if (alive_node != NULL) {
                             alive_node->resources.current_cpu += remote->resources.current_cpu;
@@ -212,8 +212,8 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
     }
 
     log_message("[C]: Manejando conexión inesperada del nodo %s:%s",
-                dead_node->node_connection_info.ip,
-                dead_node->node_connection_info.port);
+                dead_node->connection_info.ip,
+                dead_node->connection_info.port);
 
     // No hay desconexión inesperada; proseguimos
     if (dead_node == NULL)
@@ -223,6 +223,6 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
     release_affected_jobs(dead_node, node_map, job_map, node_resources);
 
     // Lo eliminamos de nuestra tabla de nodos
-    hashmap_delete(node_map, &dead_node->node_connection_info);
+    hashmap_delete(node_map, &dead_node->connection_info);
     free(dead_node);
 }

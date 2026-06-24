@@ -9,14 +9,14 @@ unsigned int int_hash(unsigned int x);
 // Aloca memoria para un clon de un NodeMapCell
 NodeMapCell *node_cell_copy(NodeMapCell *nmc)
 {
-    int port = nmc->node_connection_info.port;
+    int port = nmc->connection_info.port;
     int socket_fd = nmc->socket_fd;
     LocalResources resources = nmc->resources;
     time_t time_when_called = nmc->time_when_called;
 
     NodeMapCell* cloned = malloc(sizeof(NodeMapCell));
-    cloned->node_connection_info.ip = strdup(nmc->node_connection_info.ip);
-    cloned->node_connection_info.port = port;
+    cloned->connection_info.ip = strdup(nmc->connection_info.ip);
+    cloned->connection_info.port = port;
     cloned->socket_fd = socket_fd;
     cloned->resources = resources;
     cloned->time_when_called = time_when_called;
@@ -26,14 +26,14 @@ NodeMapCell *node_cell_copy(NodeMapCell *nmc)
 // Compara dos NodeMapCell por ip y puerto
 int node_cell_cmp(NodeMapCell *nmc1, NodeMapCell *nmc2)
 {
-    return strcmp(nmc1->node_connection_info.ip, nmc2->node_connection_info.ip) &&
-            (nmc1->node_connection_info.port == nmc2->node_connection_info.port);
+    return strcmp(nmc1->connection_info.ip, nmc2->connection_info.ip) &&
+            (nmc1->connection_info.port == nmc2->connection_info.port);
 }
 
 // Libera de memoria un NodeMapCell
 void node_cell_free(NodeMapCell *nmc)
 {
-    free(nmc->node_connection_info.ip);
+    free(nmc->connection_info.ip);
     free(nmc);
 }
 
@@ -42,11 +42,11 @@ unsigned int node_cell_hash(NodeMapCell *nmp)
 {
     // Hasheamos la IP
     unsigned int ip_hash = 0;
-    for (int i = 0; nmp->node_connection_info.ip[i] != '\0'; ++i)
-        ip_hash = 31*ip_hash + nmp->node_connection_info.ip[i];
+    for (int i = 0; nmp->connection_info.ip[i] != '\0'; ++i)
+        ip_hash = 31*ip_hash + nmp->connection_info.ip[i];
 
     // Hasheamos el puerto
-    unsigned int port_hash = int_hash(nmp->node_connection_info.port);
+    unsigned int port_hash = int_hash(nmp->connection_info.port);
 
     // Combinamos los hash, basado en
     // https://www.boost.org/doc/libs/1_53_0/doc/html/hash/reference.html#boost.hash_combine
@@ -185,7 +185,7 @@ ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int 
         // a quién se le pide recursos
         NodeMapCell *cached_node = hashmap_search(node_map, &nodes[nodes_len].erlang_connection_info.ip);
         if (cached_node != NULL)
-            nodes[nodes_len].erlang_connection_info.port = cached_node->node_connection_info.port;
+            nodes[nodes_len].erlang_connection_info.port = cached_node->connection_info.port;
         else
             nodes[nodes_len].erlang_connection_info.port = DEFAULT_PORT;
 

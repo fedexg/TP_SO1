@@ -33,7 +33,7 @@ typedef struct _RemoteAllocation {
 
 // Elemento de la tabla de nodos
 typedef struct _NodeMapCell {
-    ConnectionInfo node_connection_info;
+    ConnectionInfo connection_info;
     int socket_fd;
     LocalResources resources;
     time_t time_when_called;
