@@ -65,7 +65,7 @@ JobMapCell *job_cell_copy(JobMapCell *jmc)
     cloned->job_id = job_id;
     cloned->num_remotely_allocated = num_remotely_allocated;
     cloned->remote_allocations = calloc(num_remotely_allocated, sizeof(RemoteAllocation));
-    memcpy(cloned->remote_allocations, remote_allocations, num_remotely_allocated);
+    memcpy(cloned->remote_allocations, remote_allocations, sizeof(RemoteAllocation)*num_remotely_allocated);
     cloned->granted_resources = granted_resources;
     return cloned;
 }
@@ -114,7 +114,7 @@ JobQueueData *job_copy(JobQueueData *j)
     cloned->request.job_id = job_id;
     cloned->request.num_allocations = num_allocations;
     cloned->request.node_allocations = calloc(num_allocations, sizeof(NodeAllocationInfo));
-    memcpy(cloned->request.node_allocations, node_allocations, num_allocations);
+    memcpy(cloned->request.node_allocations, node_allocations, sizeof(NodeAllocationInfo)*num_allocations);
     cloned->time_when_alloc = time_when_alloc;
 
     return cloned;
@@ -128,9 +128,9 @@ void job_free(JobQueueData *j)
 }
 
 // Copia un entero
-int *int_copy(int *x)
+long long *int_copy(long long *x)
 {
-    int *p = malloc(sizeof(int));
+    long long *p = malloc(sizeof(long long));
     *p = *x;
     return p;
 }
@@ -166,7 +166,9 @@ Request parse_request(char **request_fields, int n_fields)
 
 // Parsea una petición del tipo JOB_REQUEST <job_id> [@ip:res:amount ... ]
 // para crear un ErlangRequest a partir de la petición
-ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int request_fields_size, int fd)
+ErlangRequest parse_erlang_request(Hashmap node_map, int agent_port,
+                                   char **request_fields,
+                                   int request_fields_size, int fd)
 {
     ErlangRequest erl = { 0 };
     erl.erlang_fd = fd;
@@ -180,18 +182,10 @@ ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int 
     for (int i = 2; i < request_fields_size; ++i) {
         char **node_information = split(request_fields[i], ":", NULL);
         nodes[nodes_len].erlang_connection_info.ip = strdup(node_information[0] + 1);
-
-        // Hacemos esto para obtener el puerto de
-        // a quién se le pide recursos
-        NodeMapCell *cached_node = hashmap_search(node_map, &nodes[nodes_len].erlang_connection_info.ip);
-        if (cached_node != NULL)
-            nodes[nodes_len].erlang_connection_info.port = cached_node->connection_info.port;
-        else
-            nodes[nodes_len].erlang_connection_info.port = DEFAULT_PORT;
+        nodes[nodes_len].erlang_connection_info.port = agent_port;
 
         nodes[nodes_len].agent_fd = -1;
 
-        // TODO: arreglar este algoritmo para que no de segfault
         // Determinamos qué tipo de recurso se pide
         if (streq(node_information[1], "cpu")) {
             nodes[nodes_len].res_kind = RES_KIND_CPU;
@@ -215,6 +209,6 @@ ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int 
 
     erl.num_allocations = nodes_len;
     erl.node_allocations = calloc(erl.num_allocations, sizeof(NodeAllocationInfo));
-    memcpy(erl.node_allocations, nodes, erl.num_allocations);
+    memcpy(erl.node_allocations, nodes, sizeof(NodeAllocationInfo)*erl.num_allocations);
     return erl;
 }
