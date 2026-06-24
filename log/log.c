@@ -17,7 +17,7 @@ static pthread_mutex_t logLk = PTHREAD_MUTEX_INITIALIZER;
 void log_message(char *msg, ...)
 {
 	va_list l;
-	char fstr[100];
+	char fstr[1024];
 	time_t t_st;
 	char timebuf[26];
 
