@@ -313,12 +313,15 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
     if (job != NULL) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_GRANTED %lld\n", job_id);
+        log_message("[C]: Enviando JOB_GRANTED al cliente Erlang");
     } else if (find_in_queue(state->job_queue, job_id)) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_DENIED %lld\n", job_id);
+        log_message("[C]: Enviando JOB_DENIED al cliente Erlang");
     } else if (find_in_list(state->timed_out_jobs, job_id)) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_TIMEOUT %lld\n", job_id);
+        log_message("[C]: Enviando timeout al cliente Erlang");
         delete_from_timed_out_jobs(state->timed_out_jobs, job_id);
     }
 

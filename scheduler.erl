@@ -1,13 +1,14 @@
 -module(scheduler).
 -export([start/0]).
 
--export([start_scheduler/0, job_manager/5, message_manager/3]).
+-export([start_scheduler/0, job_manager/5, message_manager/3, client_simulator/1]).
 -define(PORT,1337).
 
 % Inicia el iniciador del Scheduler y el simulador de cliente 
 % %
 start() ->
     Scheduler = spawn(?MODULE, start_scheduler, []),
+    spawn(?MODULE, client_simulator, []),
     client_simulator(Scheduler).
 % %
 
