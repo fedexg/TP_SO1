@@ -62,7 +62,7 @@ int set_socket_nonblocking(int sock)
 char **split(char *text, char *delimiter, int *len)
 {
     int cap = 32;
-    char **result = malloc(sizeof(char *)*cap);
+    char **result = malloc(cap*sizeof(char *));
 
     char *s2 = strdup(text);
     char *tok = strtok(s2, delimiter);
@@ -71,6 +71,11 @@ char **split(char *text, char *delimiter, int *len)
     while (tok) {
         tok = strtok(NULL, delimiter);
         result[i++] = tok;
+
+        if (i >= cap/2) {
+            cap *= 2;
+            result = realloc(result, cap*sizeof(char *));
+        }
     }
 
     if (len)
