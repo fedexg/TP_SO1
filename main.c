@@ -532,7 +532,7 @@ void *epoll_handler(void *arg)
                 set_socket_nonblocking(connect_public_sock);
 
                 // Lo sumamos a la instancia de epoll
-                ev.events = EPOLLIN | EPOLLOUT;
+                ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
                 ev.data.fd = connect_public_sock;
                 if (add_descriptor(epoll_fd, connect_public_sock, &ev) < 0)
                     exit(EXIT_FAILURE);
@@ -550,7 +550,7 @@ void *epoll_handler(void *arg)
                 set_socket_nonblocking(connect_erlang_sock);
 
                 // Lo sumamos a la instancia de epoll
-                ev.events = EPOLLIN | EPOLLOUT;
+                ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
                 ev.data.fd = connect_erlang_sock;
                 if (add_descriptor(epoll_fd, connect_erlang_sock, &ev) < 0)
                     exit(EXIT_FAILURE);

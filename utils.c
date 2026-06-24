@@ -82,7 +82,7 @@ char **split(char *text, char *delimiter, int *len)
 int add_descriptor(int epoll_fd, int fd, struct epoll_event *ev)
 {
     struct epoll_event evv;
-    evv.events = EPOLLIN;
+    evv.events = EPOLLIN | EPOLLET;
     evv.data.fd = fd;
     if (ev == NULL)
         ev = &evv;

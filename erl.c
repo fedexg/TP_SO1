@@ -45,6 +45,8 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
         return;
     else {
         int length = 0;
+        log_message("[C]: Petición recibida de Erlang: %s", buffer);
+
         char **request_fields = split(buffer, " ", &length);
         if (streq(request_fields[0], "GET_NODES\n")) {
             handle_get_nodes(state->node_map, erlang_fd);
@@ -54,8 +56,6 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
         ErlangRequest erl = parse_erlang_request(state->node_map,
                                                  request_fields,
                                                  length, erlang_fd);
-
-        log_message("[C]: Procesando petición enviada por un cliente Erlang con job_id %lld", erl.job_id);
 
         // Manejamos el tipo de petición que se nos hizo
         if (streq(request_fields[0], "JOB_REQUEST"))
@@ -406,6 +406,9 @@ void handle_get_nodes(Hashmap node_map, int erlang_fd)
         }
     }
 
+    buffer[strlen(buffer)] = '\n';
+    buffer[strlen(buffer) + 1] = '\0';
+
     // Enviamos la información de todos los nodos en el cluster
     // y liberamos el mensaje
     send(erlang_fd, buffer, strlen(buffer), 0);
@@ -416,6 +419,7 @@ void handle_get_nodes(Hashmap node_map, int erlang_fd)
 void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job_id,
                             const char *resource, int amount, int epoll_fd)
 {
+    // TODO: también usar puerto
     NodeMapCell *target_node = hashmap_search(node_map, &agent_ip);
 
     // El nodo no está en el cluster, así que no hacemos nada
@@ -423,7 +427,9 @@ void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job
         return;
 
     // Intentamos buscar su descriptor de archivo para enviar el mensaje
-    int fd = get_agent_connection(target_node->connection_info.ip, target_node->connection_info.port, epoll_fd);
+    int fd = get_agent_connection(target_node->connection_info.ip,
+                                  target_node->connection_info.port,
+                                  epoll_fd);
     if (fd == -1) {
         error("Error intentando conectarse a un nodo");
         return;
