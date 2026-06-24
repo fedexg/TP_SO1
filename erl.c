@@ -222,7 +222,13 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
         }
 
         free(remote_allocs);
-        enqueue(state->job_queue, &erl, (QueueCpyFunc)job_copy);
+        JobQueueData data = {erl, time(NULL)};
+
+        pthread_mutex_lock(&state->protection.mutex);
+        state->job_queue = enqueue(state->job_queue, &data, (QueueCpyFunc)job_copy);
+        pthread_mutex_unlock(&state->protection.mutex);
+
+        log_message("[C]: Encolando el job con id %lld", job_id);
         pthread_cond_signal(&state->protection.nonempty_queue_cond);
         return;
     }
@@ -252,7 +258,7 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
     // No encontramos un trabajo con este id, informarlo al cliente
     if (cell == NULL) {
         char error_buf[1024] = { 0 };
-        sprintf(error_buf, "JOB_ERROR %lld", job_id); //El job id no existe
+        sprintf(error_buf, "JOB_ERROR %lld", job_id); // El job id no existe
         send(erl.erlang_fd, error_buf, strlen(error_buf), 0);
         log_message("[C]: Enviando JOB_ERROR al cliente Erlang");
         return;
@@ -299,28 +305,24 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
 
     log_message("[C]: Procesando un status sobre el job id %lld", job_id);
 
-    // Si el job no existe, se le informa al cliente de Erlang
-
     // Si el job existe, le informamos al cliente de Erlang que
     // fue dado. De lo contrario, si está en la cola es porque
     // fue negado. Si no, está en la lista de jobs que recibió
     // un TIMEOUT
 
-    if (job == NULL) {
-        memset(buffer, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(buffer, "JOB_ERROR %lld", job_id); //El job id no existe
-        log_message("[C]: Enviando JOB_ERROR al cliente Erlang");
-    }
-
     if (job != NULL) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_GRANTED %lld\n", job_id);
         log_message("[C]: Enviando JOB_GRANTED al cliente Erlang");
-    } else if (find_in_queue(state->job_queue, job_id)) {
+    }
+
+    if (find_in_queue(state->job_queue, job_id)) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_DENIED %lld\n", job_id);
         log_message("[C]: Enviando JOB_DENIED al cliente Erlang");
-    } else if (find_in_list(state->timed_out_jobs, job_id)) {
+    }
+
+    if (find_in_list(state->timed_out_jobs, job_id)) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_TIMEOUT %lld\n", job_id);
         log_message("[C]: Enviando timeout al cliente Erlang");
