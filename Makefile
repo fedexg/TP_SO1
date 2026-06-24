@@ -55,3 +55,5 @@ clean:
 	-rm $(C_OBJ)
 # Limpiar .beam
 	rm -f *.beam
+# Limpiar Log file
+	rm -f scheduler_log.txt

@@ -163,7 +163,7 @@ job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
 % si el Job_Id existe se le avisara a su manager que el Job no es valido
 % En cualquier otro caso no ocurrira nada 
 error_from_agent(Job_Id, Manager_Map) ->
-    case maps:is_key(name, Manager_Map) of
+    case maps:is_key(Job_Id, Manager_Map) of
         true -> 
             maps:get(Job_Id, Manager_Map) ! invalid_job;
         _ ->
