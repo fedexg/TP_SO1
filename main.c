@@ -31,7 +31,7 @@ int listen_public_sock, listen_erlang_sock;
 int udp_broadcast_sock;
 int timer_fd;
 int epoll_fd, num_fds_ready;
-int agent_port;
+int agent_port, erlang_port;
 static int seconds_passed = 0;
 struct epoll_event events[EPOLL_MAX_EVENTS];
 
@@ -85,11 +85,16 @@ int main(int argc, char **argv)
     // ignorarlo, pues se maneja cuando read() <= 0
     signal(SIGPIPE, SIG_IGN);
 
-    if (argc < 2)
+    if (argc < 2) {
         agent_port = DEFAULT_PORT;
-    else
+        erlang_port = DEFAULT_ERLANG_PORT;
+    } else if (argc < 3) {
         agent_port = atoi(argv[1]);
-
+        erlang_port = DEFAULT_ERLANG_PORT;
+    } else {
+        agent_port = atoi(argv[1]);
+        erlang_port = atoi(argv[2]);
+    }
     state.agent_port = agent_port;
 
     // Nos insertamos en la tabla de nodos
@@ -338,7 +343,7 @@ int init_listen_erlang_socket(void)
     struct sockaddr_in sa_erlang;
     memset(&sa_erlang, 0, sizeof(sa_erlang));
     sa_erlang.sin_family = AF_INET;
-    sa_erlang.sin_port = htons(ERLANG_PORT);
+    sa_erlang.sin_port = htons(erlang_port);
     sa_erlang.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     if (bind(listen_erlang_sock, (struct sockaddr *)&sa_erlang, sizeof(sa_erlang)) < 0) {
