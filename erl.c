@@ -252,7 +252,7 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
     // No encontramos un trabajo con este id, informarlo al cliente
     if (cell == NULL) {
         char error_buf[1024] = { 0 };
-        sprintf(error_buf, "Error: no existe el job con id %lld", job_id);
+        sprintf(error_buf, "JOB_ERROR %lld", job_id); //El job id no existe
         send(erl.erlang_fd, error_buf, strlen(error_buf), 0);
         return;
     }
@@ -307,7 +307,7 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
 
     if (job == NULL) {
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(buffer, "Error: no existe un job con id %lld", job_id);
+        sprintf(buffer, "JOB_ERROR %lld", job_id); //El job id no existe
     }
 
     if (job != NULL) {

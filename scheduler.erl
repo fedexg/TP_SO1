@@ -8,7 +8,7 @@
 % %
 start() ->
     Scheduler = spawn(?MODULE, start_scheduler, []),
-    spawn(?MODULE, client_simulator, []),
+    spawn(?MODULE, client_simulator, [Scheduler]),
     client_simulator(Scheduler).
 % %
 
@@ -152,14 +152,28 @@ job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
                                     send_to_agent(Socket, status, hd(Job_Id)); 
         ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" was timeouted by the C agent~n"),
                                     maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! invalid_job;
+        ["JOB_ERROR" | Job_Id] -> io:fwrite("[Erlang]: The C agent has found an error with job_id "++hd(Job_Id)++"~n"),
+                                    error_from_agent(list_to_integer(hd(Job_Id)),Manager_Map);
         Any -> io:fwrite("[Erlang]: Command error: ~p~n", [Any])
     end.
 % %
 
+% En caso de que el agente tenga un error a la hora de trabar con un Job_Id
+% Le enviara al erlang un error con esa id, 
+% si el Job_Id existe se le avisara a su manager que el Job no es valido
+% En cualquier otro caso no ocurrira nada 
+error_from_agent(Job_Id, Manager_Map) ->
+    case maps:is_key(name, Manager_Map) of
+        true -> 
+            maps:get(Job_Id, Manager_Map) ! invalid_job;
+        _ ->
+            io:fwrite("[Erlang]: The Job_Id ~p doesn't exist.~n", [Job_Id])
+    end.
+
 write_inbox(Data) ->
     File_Name = "scheduler_log.txt",
     Data_To_Write = "# Agent C responce to Erlang Scheduler:\n\t"++Data++"\n",
-    case file:write_file(File_Name, Data_To_Write) of
+    case file:write_file(File_Name, Data_To_Write, [append]) of
         ok -> 
             io:format("[Erlang]: Written Inbox in the Log.~n");
         {error, Reason} -> 
