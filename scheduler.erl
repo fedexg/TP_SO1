@@ -31,12 +31,12 @@ start_scheduler() ->
 % %
 
 scheduler_loop(Socket, Job_Queue, Client_Map, N, Message_Manager) ->
-    Nodes_Info = request_nodes_info(Socket),            % <- Cada nuevo loop, le pregunta al Agente C que opciones tiene para otorgar a los clientes. 
     case queue:is_empty(Job_Queue) of                   
         % La cola de JOBS tiene elementos: atiende el JOB que desencola. 
         false -> 
             {Queue_Head, New_Job_Queue} = queue:out(Job_Queue),             % <- La cola guarda tuplas de la forma {ID,INFO}, JOBs
             {value, {Job_Id, Job_Info}} = Queue_Head,
+            Nodes_Info = request_nodes_info(Socket),            % <- Siempre que lo necesita, le pregunta al Agente C que opciones tiene para otorgar a los clientes. 
             Job_Manager = spawn(?MODULE, job_manager, [Socket, Nodes_Info, Job_Id, Job_Info, maps:get(Job_Id, Client_Map)]),  %<- Se le asigna al JOB un manager para que lo gestione.
             Message_Manager ! {Job_Id, Job_Manager},
             New_Client_Map = maps:remove(Job_Id, Client_Map),                       % <- Saca el JOB de la atencion del Scheduler, ahora se encarga su manager.
