@@ -4,6 +4,8 @@
 #include "utils.h"
 #include "types.h"
 
+unsigned int int_hash(unsigned int x);
+
 // Aloca memoria para un clon de un NodeMapCell
 NodeMapCell *node_cell_copy(NodeMapCell *nmc)
 {
@@ -24,7 +26,8 @@ NodeMapCell *node_cell_copy(NodeMapCell *nmc)
 // Compara dos NodeMapCell por ip y puerto
 int node_cell_cmp(NodeMapCell *nmc1, NodeMapCell *nmc2)
 {
-    return strcmp(nmc1->node_connection_info.ip, nmc2->node_connection_info.ip) && (nmc1->node_connection_info.port == nmc2->node_connection_info.port);
+    return strcmp(nmc1->node_connection_info.ip, nmc2->node_connection_info.ip) &&
+            (nmc1->node_connection_info.port == nmc2->node_connection_info.port);
 }
 
 // Libera de memoria un NodeMapCell
@@ -34,16 +37,20 @@ void node_cell_free(NodeMapCell *nmc)
     free(nmc);
 }
 
-// TODO: Cambiar la funcion hash para tener en cuenta el puerto y la nueva estructura
-
-// Calcula K&R hash sobre la IP de un NodeMapCell
+// Calcula hash sobre la IP y puerto de un NodeMapCell
 unsigned int node_cell_hash(NodeMapCell *nmp)
 {
-    unsigned int h = 0;
+    // Hasheamos la IP
+    unsigned int ip_hash = 0;
     for (int i = 0; nmp->node_connection_info.ip[i] != '\0'; ++i)
-        h = 31*h + nmp->node_connection_info.ip[i];
-    
-    return h;
+        ip_hash = 31*ip_hash + nmp->node_connection_info.ip[i];
+
+    // Hasheamos el puerto
+    unsigned int port_hash = int_hash(nmp->node_connection_info.port);
+
+    // Combinamos los hash, basado en
+    // https://www.boost.org/doc/libs/1_53_0/doc/html/hash/reference.html#boost.hash_combine
+    return ip_hash ^ (port_hash + 0x9e3779b9u + (ip_hash << 6) + (ip_hash >> 2));
 }
 
 // Aloca memoria para un clon de un JobMapCell
@@ -79,7 +86,18 @@ void job_cell_free(JobMapCell* jmc)
 // Calcula el hash de un JobMapCell segun su job_id
 unsigned int job_cell_hash(JobMapCell *jmc)
 {
-    return 8191*jmc->job_id;
+    return int_hash(jmc->job_id);
+}
+
+// Calcula el hash para enteros
+// https://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
+unsigned int int_hash(unsigned int x)
+{
+    x = ((x >> 16) ^ x) * 0x45d9f3bu;
+    x = ((x >> 16) ^ x) * 0x45d9f3bu;
+    x = (x >> 16) ^ x;
+
+    return x;
 }
 
 // Aloca memoria para un clon de un JobQueueData
