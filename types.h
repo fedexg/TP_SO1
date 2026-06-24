@@ -19,17 +19,21 @@ typedef struct _LocalResources {
     int gpu;
 } LocalResources;
 
+// Informacion con respecto a la conexion en la red
+typedef struct ConnectionInfo{
+    char* ip;
+    int port;
+}ConnectionInfo;
+
 // Guarda los recursos alocados en un nodo remoto
 typedef struct _RemoteAllocation {
-    char ip[16];
-    int port;
+    ConnectionInfo connection_info;
     LocalResources resources;
 } RemoteAllocation;
 
 // Elemento de la tabla de nodos
 typedef struct _NodeMapCell {
-    char *ip;
-    int port;
+    ConnectionInfo node_connection_info;
     int socket_fd;
     LocalResources resources;
     time_t time_when_called;
@@ -54,8 +58,7 @@ typedef struct _Request {
 // Guarda la información de un nodo en una petición hecha
 // por el cliente Erlang
 typedef struct _NodeAllocationInfo {
-    char *ip;
-    int port;
+    ConnectionInfo erlang_connection_info;
     int agent_fd;  // Guarda la conexión con el agente C
     ResourceKind res_kind;
     int amount;

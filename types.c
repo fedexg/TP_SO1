@@ -7,14 +7,14 @@
 // Aloca memoria para un clon de un NodeMapCell
 NodeMapCell *node_cell_copy(NodeMapCell *nmc)
 {
-    int port = nmc->port;
+    int port = nmc->node_connection_info.port;
     int socket_fd = nmc->socket_fd;
     LocalResources resources = nmc->resources;
     time_t time_when_called = nmc->time_when_called;
 
     NodeMapCell* cloned = malloc(sizeof(NodeMapCell));
-    cloned->ip = strdup(nmc->ip);
-    cloned->port = port;
+    cloned->node_connection_info.ip = strdup(nmc->node_connection_info.ip);
+    cloned->node_connection_info.port = port;
     cloned->socket_fd = socket_fd;
     cloned->resources = resources;
     cloned->time_when_called = time_when_called;
@@ -24,13 +24,13 @@ NodeMapCell *node_cell_copy(NodeMapCell *nmc)
 // Compara dos NodeMapCell por ip y puerto
 int node_cell_cmp(NodeMapCell *nmc1, NodeMapCell *nmc2)
 {
-    return strcmp(nmc1->ip, nmc2->ip) && (nmc1->port == nmc2->port);
+    return strcmp(nmc1->node_connection_info.ip, nmc2->node_connection_info.ip) && (nmc1->node_connection_info.port == nmc2->node_connection_info.port);
 }
 
 // Libera de memoria un NodeMapCell
 void node_cell_free(NodeMapCell *nmc)
 {
-    free(nmc->ip);
+    free(nmc->node_connection_info.ip);
     free(nmc);
 }
 
@@ -38,8 +38,8 @@ void node_cell_free(NodeMapCell *nmc)
 unsigned int node_cell_hash(NodeMapCell *nmp)
 {
     unsigned int h = 0;
-    for (int i = 0; nmp->ip[i] != '\0'; ++i)
-        h = 31*h + nmp->ip[i];
+    for (int i = 0; nmp->node_connection_info.ip[i] != '\0'; ++i)
+        h = 31*h + nmp->node_connection_info.ip[i];
 
     return h;
 }
@@ -159,15 +159,15 @@ ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int 
     // Empezamos desde el arreglo de nodos [@ip:res:amount ... ]
     for (int i = 2; i < request_fields_size; ++i) {
         char **node_information = split(request_fields[i], ":", NULL);
-        nodes[nodes_len].ip = strdup(node_information[0] + 1);
+        nodes[nodes_len].erlang_connection_info.ip = strdup(node_information[0] + 1);
 
         // Hacemos esto para obtener el puerto de
         // a quién se le pide recursos
-        NodeMapCell *cached_node = hashmap_search(node_map, &nodes[nodes_len].ip);
+        NodeMapCell *cached_node = hashmap_search(node_map, &nodes[nodes_len].erlang_connection_info.ip);
         if (cached_node != NULL)
-            nodes[nodes_len].port = cached_node->port;
+            nodes[nodes_len].erlang_connection_info.port = cached_node->node_connection_info.port;
         else
-            nodes[nodes_len].port = DEFAULT_PORT;
+            nodes[nodes_len].erlang_connection_info.port = DEFAULT_PORT;
 
         nodes[nodes_len].agent_fd = -1;
 

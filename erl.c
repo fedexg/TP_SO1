@@ -134,7 +134,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
         // Determinamos a quién hay que enviarle un mensaje
         int agent_fd = alloc.agent_fd;
         if (agent_fd == -1) {
-            agent_fd = get_agent_connection(alloc.ip, alloc.port, epoll_fd);
+            agent_fd = get_agent_connection(alloc.erlang_connection_info.ip, alloc.erlang_connection_info.port, epoll_fd);
 
             if (agent_fd == -1) {
                 error("Error intentando conectarse a un nodo");
@@ -155,7 +155,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
 
         // Evitamos enviarnos un mensaje a nosotros mismos; simplemente
         // tomamos nuestros propios recursos, y lo consideramos GRANTED
-        if (streq(alloc.ip, my_ip)) {
+        if (streq(alloc.erlang_connection_info.ip, my_ip)) {
             if (exists_resource(&state->node_resources, alloc.res_kind, alloc.amount)) {
                 give_resources(&state->node_resources, alloc.res_kind, alloc.amount);
                 increase_resources(&local, alloc.res_kind, alloc.amount);
@@ -175,8 +175,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
             // Con saber que recibimos GRANTED podemos guardar los recursos;
             // no necesitamos el job_id en este caso
             if (strncmp(recv_buffer, "GRANTED", 7) == 0) {
-                strcpy(remote_allocs[num_granted].ip, alloc.ip);
-                remote_allocs[num_granted].port = alloc.port;
+                strcpy(remote_allocs[num_granted].connection_info.ip, alloc.erlang_connection_info.ip);
+                remote_allocs[num_granted].connection_info.port = alloc.erlang_connection_info.port;
                 if (alloc.res_kind == RES_KIND_CPU)
                     remote_allocs[num_granted].resources.current_cpu += alloc.amount;
                 if (alloc.res_kind == RES_KIND_MEM)
@@ -203,7 +203,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
         for (ListNode *p = agent_fds; p != NULL; p = p->next) {
             for (int i = 0; i < erl.num_allocations; ++i) {
                 NodeAllocationInfo alloc = erl.node_allocations[i];
-                if (streq(alloc.ip, my_ip))
+                if (streq(alloc.erlang_connection_info.ip, my_ip))
                     increase_resources(&state->node_resources, alloc.res_kind, alloc.amount);
                 else {
                     if (*(int *)p->data == alloc.agent_fd) {
@@ -268,15 +268,15 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
     for (int i = 0; i < cell->num_remotely_allocated; i++) {
         RemoteAllocation remote = cell->remote_allocations[i];
         if (remote.resources.current_cpu > 0)
-            send_release_to_agent(state->node_map, remote.ip, job_id,
+            send_release_to_agent(state->node_map, remote.connection_info.ip, job_id,
                                   "cpu", remote.resources.current_cpu,
                                   epoll_fd);
         if (remote.resources.current_mem > 0)
-            send_release_to_agent(state->node_map, remote.ip, job_id,
+            send_release_to_agent(state->node_map, remote.connection_info.ip, job_id,
                                   "mem", remote.resources.current_mem,
                                   epoll_fd);
         if (remote.resources.current_gpu > 0)
-            send_release_to_agent(state->node_map, remote.ip, job_id,
+            send_release_to_agent(state->node_map, remote.connection_info.ip, job_id,
                                   "gpu", remote.resources.current_gpu,
                                   epoll_fd);
     }
@@ -386,8 +386,8 @@ void handle_get_nodes(Hashmap node_map, int erlang_fd)
             NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
             char node_buffer[1024] = { 0 };
             snprintf(node_buffer, sizeof(node_buffer), "%s:%d:cpu:%d:mem:%d:gpu:%d;",
-                     node->ip,
-                     node->port,
+                     node->node_connection_info.ip,
+                     node->node_connection_info.port,
                      node->resources.cpu,
                      node->resources.mem,
                      node->resources.gpu);
@@ -421,7 +421,7 @@ void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job
         return;
 
     // Intentamos buscar su descriptor de archivo para enviar el mensaje
-    int fd = get_agent_connection(target_node->ip, target_node->port, epoll_fd);
+    int fd = get_agent_connection(target_node->node_connection_info.ip, target_node->node_connection_info.port, epoll_fd);
     if (fd == -1) {
         error("Error intentando conectarse a un nodo");
         return;
