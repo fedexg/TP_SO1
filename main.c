@@ -28,13 +28,12 @@
 #include "log/log.h"
 
 int listen_public_sock, listen_erlang_sock;
-int connect_public_sock, connect_erlang_sock;
 int udp_broadcast_sock;
 int timer_fd;
 int epoll_fd, num_fds_ready;
 int agent_port;
 static int seconds_passed = 0;
-struct epoll_event ev, events[EPOLL_MAX_EVENTS];
+struct epoll_event events[EPOLL_MAX_EVENTS];
 
 AgentState state;
 
@@ -419,11 +418,6 @@ int init_timer(void)
         return FAIL;
     }
 
-    if (add_descriptor(epoll_fd, timer_fd, NULL) < 0) {
-        close(timer_fd);
-        return FAIL;
-    }
-
     return OK;
 }
 
@@ -495,13 +489,42 @@ void send_udp_announce(void)
 // Añade los descriptores necesarios a la instancia de epoll
 int add_descriptors(void)
 {
-    if (add_descriptor(epoll_fd, listen_public_sock, NULL) < 0)
+    ConnContext *ctx_public = malloc(sizeof(ConnContext));
+    ctx_public->fd = listen_public_sock;
+    ctx_public->type = CONN_TYPE_PUBLIC;
+
+    ConnContext *ctx_erlang = malloc(sizeof(ConnContext));
+    ctx_erlang->fd = listen_erlang_sock;
+    ctx_erlang->type = CONN_TYPE_ERL;
+
+    ConnContext *ctx_udp = malloc(sizeof(ConnContext));
+    ctx_udp->fd = udp_broadcast_sock;
+    ctx_udp->type = CONN_TYPE_UDP;
+
+    ConnContext *ctx_timer = malloc(sizeof(ConnContext));
+    ctx_timer->fd = timer_fd;
+    ctx_timer->type = CONN_TYPE_TIMER;
+
+    struct epoll_event ev;
+
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.ptr = ctx_public;
+    if (add_descriptor(epoll_fd, listen_public_sock, &ev) < 0)
         return FAIL;
 
-    if (add_descriptor(epoll_fd, listen_erlang_sock, NULL) < 0)
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.ptr = ctx_erlang;
+    if (add_descriptor(epoll_fd, listen_erlang_sock, &ev) < 0)
         return FAIL;
 
-    if (add_descriptor(epoll_fd, udp_broadcast_sock, NULL) < 0)
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.ptr = ctx_udp;
+    if (add_descriptor(epoll_fd, udp_broadcast_sock, &ev) < 0)
+        return FAIL;
+
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.ptr = ctx_timer;
+    if (add_descriptor(epoll_fd, timer_fd, &ev) < 0)
         return FAIL;
 
     return OK;
@@ -518,68 +541,108 @@ void *epoll_handler(void *arg)
         }
 
         for (int i = 0; i < num_fds_ready; ++i) {
-            if (events[i].data.fd == listen_public_sock) {
-                log_message("[C]: Recibiendo evento de agente C");
+            ConnContext *ctx = (ConnContext *)events[i].data.ptr;
+            int event_flags = events[i].events;
 
-                // Creamos un socket de conexión al agente de C
-                // para enviar y recibir mensajes
-                connect_public_sock = accept(listen_public_sock, NULL, NULL);
-                if (connect_public_sock == -1) {
-                    error("Error intentando aceptar un agente");
-                    exit(EXIT_FAILURE);
-                }
+            if (event_flags & EPOLLIN) {
+                switch (ctx->type) {
+                case CONN_TYPE_PUBLIC: {
+                    struct sockaddr_in addr;
+                    socklen_t addrlen = sizeof(addr);
 
-                set_socket_nonblocking(connect_public_sock);
-
-                // Lo sumamos a la instancia de epoll
-                ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
-                ev.data.fd = connect_public_sock;
-                if (add_descriptor(epoll_fd, connect_public_sock, &ev) < 0)
-                    exit(EXIT_FAILURE);
-            } else if (events[i].data.fd == listen_erlang_sock) {
-                log_message("[C]: Recibiendo evento de Erlang");
-
-                // Creamos un socket de conexión al cliente de Erlang
-                // para enviar y recibir mensajes
-                connect_erlang_sock = accept(listen_erlang_sock, NULL, NULL);
-                if (connect_erlang_sock == -1) {
-                    error("Error intentando aceptar un cliente Erlang");
-                    exit(EXIT_FAILURE);
-                }
-
-                set_socket_nonblocking(connect_erlang_sock);
-
-                // Lo sumamos a la instancia de epoll
-                ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
-                ev.data.fd = connect_erlang_sock;
-                if (add_descriptor(epoll_fd, connect_erlang_sock, &ev) < 0)
-                    exit(EXIT_FAILURE);
-            } else if (events[i].data.fd == udp_broadcast_sock) {
-                log_message("[C]: Manejando evento de socket de broadcast UDP");
-
-                // Si es el socket de broadcast, lo manejamos por separado
-                handle_udp_packet(events[i].data.fd);
-            } else if (events[i].data.fd == timer_fd) {
-                // Chequeamos si el tiempo de un agente expiró
-                long long expirations = 0;
-                read(timer_fd, &expirations, sizeof(long long));
-                check_agent_expiration_time();
-            } else {
-                // Manejamos al agente de C como un cliente o
-                // al cliente de Erlang
-                int client_fd = events[i].data.fd;
-                if (client_fd == connect_public_sock)
-                    handle_c_agent(client_fd, epoll_fd, &state);
-                else if (client_fd == connect_erlang_sock)
-                    handle_erlang_client(client_fd, epoll_fd, &state);
-                else {
-                    char response[BUFFER_MAX_SIZE] = { 0 };
-                    ssize_t bytes = read(client_fd, response, sizeof(response) - 1);
-                    if (bytes <= 0) {
-                        close(client_fd);
-                        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
+                    // Creamos un socket de conexión al agente de C
+                    // para enviar y recibir mensajes
+                    int connect_public_sock = accept(listen_public_sock, (struct sockaddr *)&addr, &addrlen);
+                    if (connect_public_sock == -1) {
+                        error("Error intentando aceptar un agente");
+                        exit(EXIT_FAILURE);
                     }
+
+                    log_message("[C]: Nuevo agente desde %s:%d",
+                            inet_ntoa(addr.sin_addr), addr.sin_port);
+                    set_socket_nonblocking(connect_public_sock);
+
+                    // Lo sumamos a la instancia de epoll
+                    ConnContext *ctx = malloc(sizeof(ConnContext));
+                    ctx->fd = connect_public_sock;
+                    ctx->type = CONN_TYPE_CLIENT_REMOTE;
+
+                    struct epoll_event ev;
+                    ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+                    ev.data.ptr = ctx;
+                    if (add_descriptor(epoll_fd, ctx->fd, &ev) < 0)
+                        exit(EXIT_FAILURE);
+
+                    break;
                 }
+
+                case CONN_TYPE_ERL: {
+                    struct sockaddr_in addr;
+                    socklen_t addrlen = sizeof(addr);
+
+                    // Creamos un socket de conexión al cliente de Erlang
+                    // para enviar y recibir mensajes
+                    int connect_erlang_sock = accept(listen_erlang_sock, (struct sockaddr *)&addr, &addrlen);
+                    if (connect_erlang_sock == -1) {
+                        error("Error intentando aceptar un cliente Erlang");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    log_message("[C]: Nuevo cliente Erlang desde %s:%d",
+                            inet_ntoa(addr.sin_addr), addr.sin_port);
+                    set_socket_nonblocking(connect_erlang_sock);
+
+                    // Lo sumamos a la instancia de epoll
+                    ConnContext *ctx = malloc(sizeof(ConnContext));
+                    ctx->fd = connect_erlang_sock;
+                    ctx->type = CONN_TYPE_CLIENT_ERLANG;
+
+                    struct epoll_event ev;
+                    ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+                    ev.data.ptr = ctx;
+                    if (add_descriptor(epoll_fd, ctx->fd, &ev) < 0)
+                        exit(EXIT_FAILURE);
+
+                    break;
+                }
+
+                case CONN_TYPE_UDP:
+                    log_message("[C]: Manejando evento de socket de broadcast UDP");
+                    // Si es el socket de broadcast, lo manejamos por separado
+                    handle_udp_packet(events[i].data.fd);
+                    break;
+
+                case CONN_TYPE_CLIENT_REMOTE:
+                    handle_c_agent(ctx->fd, epoll_fd, &state);
+                    break;
+
+                case CONN_TYPE_CLIENT_ERLANG:
+                    handle_erlang_client(ctx->fd, epoll_fd, &state);
+                    break;
+
+                case CONN_TYPE_TIMER: {
+                    // Chequeamos si el tiempo de un agente expiró
+                    long long expirations = 0;
+                    read(timer_fd, &expirations, sizeof(long long));
+                    check_agent_expiration_time();
+                    break;
+                }
+
+                default:
+                    break;
+                }
+
+            }
+
+            if (event_flags & (EPOLLHUP | EPOLLERR)) {
+                char response[BUFFER_MAX_SIZE] = { 0 };
+                ssize_t bytes = read(ctx->fd, response, sizeof(response) - 1);
+                if (bytes <= 0) {
+                    close(ctx->fd);
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
+                }
+
+                free(ctx);
             }
         }
     }
@@ -666,10 +729,11 @@ void handle_udp_packet(int udp_fd)
         atoi(fields[4] + 4),
     };
 
+    log_message("[C]: ANNOUNCE desde %s:%d",
+            node->connection_info.ip, node->connection_info.port);
     node->resources = resources;
     node->time_when_called = time(NULL);
     hashmap_put(state.node_map, node);
-    log_message("[C]: Se encontró el nodo %s:%d", node->connection_info.ip, node->connection_info.port);
 
     free(fields);
 }

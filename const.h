@@ -39,4 +39,13 @@ typedef enum {
     RES_KIND_GPU
 } ResourceKind;
 
+typedef enum {
+    CONN_TYPE_PUBLIC = 0,
+    CONN_TYPE_ERL,
+    CONN_TYPE_UDP,
+    CONN_TYPE_CLIENT_REMOTE,
+    CONN_TYPE_CLIENT_ERLANG,
+    CONN_TYPE_TIMER,
+} ConnType;
+
 #endif // CONST_H

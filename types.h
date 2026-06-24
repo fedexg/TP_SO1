@@ -19,6 +19,11 @@ typedef struct _LocalResources {
     int gpu;
 } LocalResources;
 
+typedef struct ConnContext {
+    int fd;
+    ConnType type;
+} ConnContext;
+
 // Informacion con respecto a la conexion en la red
 typedef struct ConnectionInfo {
     char *ip;
