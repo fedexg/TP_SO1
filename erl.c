@@ -155,7 +155,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
 
         // Evitamos enviarnos un mensaje a nosotros mismos; simplemente
         // tomamos nuestros propios recursos, y lo consideramos GRANTED
-        if (streq(alloc.erlang_connection_info.ip, my_ip)) {
+        // TODO: Como sabemos nuestro propio Port?
+        if (streq(alloc.erlang_connection_info.ip, my_ip) && alloc.erlang_connection_info.port == ) {
             if (exists_resource(&state->node_resources, alloc.res_kind, alloc.amount)) {
                 give_resources(&state->node_resources, alloc.res_kind, alloc.amount);
                 increase_resources(&local, alloc.res_kind, alloc.amount);
@@ -203,7 +204,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
         for (ListNode *p = agent_fds; p != NULL; p = p->next) {
             for (int i = 0; i < erl.num_allocations; ++i) {
                 NodeAllocationInfo alloc = erl.node_allocations[i];
-                if (streq(alloc.erlang_connection_info.ip, my_ip))
+                // TODO: Como conocemos nuestro propio PORT
+                if (streq(alloc.erlang_connection_info.ip, my_ip) && alloc.erlang_connection_info.port == )
                     increase_resources(&state->node_resources, alloc.res_kind, alloc.amount);
                 else {
                     if (*(int *)p->data == alloc.agent_fd) {

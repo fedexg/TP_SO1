@@ -34,13 +34,15 @@ void node_cell_free(NodeMapCell *nmc)
     free(nmc);
 }
 
+// TODO: Cambiar la funcion hash para tener en cuenta el puerto y la nueva estructura
+
 // Calcula K&R hash sobre la IP de un NodeMapCell
 unsigned int node_cell_hash(NodeMapCell *nmp)
 {
     unsigned int h = 0;
     for (int i = 0; nmp->node_connection_info.ip[i] != '\0'; ++i)
         h = 31*h + nmp->node_connection_info.ip[i];
-
+    
     return h;
 }
 
@@ -171,7 +173,7 @@ ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int 
 
         nodes[nodes_len].agent_fd = -1;
 
-        // TODO
+        // TODO: arreglar este algoritmo para que no de segfault
         // Determinamos qué tipo de recurso se pide
         if (streq(node_information[1], "cpu")) {
             nodes[nodes_len].res_kind = RES_KIND_CPU;
