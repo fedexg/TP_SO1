@@ -471,7 +471,7 @@ void send_udp_announce(void)
     struct sockaddr_in sa_broadcast;
     memset(&sa_broadcast, 0, sizeof(sa_broadcast));
     sa_broadcast.sin_family = AF_INET;
-    sa_broadcast.sin_port = htons(agent_port);
+    sa_broadcast.sin_port = htons(UDP_PORT);
     sa_broadcast.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
     char buffer[BUFFER_MAX_SIZE] = { 0 };
