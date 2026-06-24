@@ -171,6 +171,7 @@ ErlangRequest parse_erlang_request(Hashmap node_map, char **request_fields, int 
 
         nodes[nodes_len].agent_fd = -1;
 
+        // TODO
         // Determinamos qué tipo de recurso se pide
         if (streq(node_information[1], "cpu")) {
             nodes[nodes_len].res_kind = RES_KIND_CPU;
