@@ -563,7 +563,7 @@ void *epoll_handler(void *arg)
                         exit(EXIT_FAILURE);
                     }
 
-                    log_message("[C]: Nuevo agente desde %s:%d",
+                    log_message("[C]: Nuevo agente C desde %s:%d",
                             inet_ntoa(addr.sin_addr), addr.sin_port);
                     set_socket_nonblocking(connect_public_sock);
 
@@ -711,14 +711,17 @@ void handle_udp_packet(int udp_fd)
     if (!streq(fields[0], "ANNOUNCE"))
         return;
 
-    char *ip = inet_ntoa(addr.sin_addr);
-    NodeMapCell *node = hashmap_search(state.node_map, &ip);
+    NodeMapCell search_node;
+    search_node.connection_info.ip = strdup(inet_ntoa(addr.sin_addr));
+    search_node.connection_info.port = atoi(fields[1]);
+
+    NodeMapCell *node = hashmap_search(state.node_map, &search_node);
 
     // Si no existe en nuestra tabla de nodos,
     // lo creamos para luego sumarlo
     if (node == NULL) {
         node = malloc(sizeof(NodeMapCell));
-        node->connection_info.ip = inet_ntoa(addr.sin_addr);
+        node->connection_info.ip = strdup(inet_ntoa(addr.sin_addr));
         node->connection_info.port = atoi(fields[1]);
         node->socket_fd = -1;
     }
@@ -740,6 +743,7 @@ void handle_udp_packet(int udp_fd)
     node->time_when_called = time(NULL);
     hashmap_put(state.node_map, node);
 
+    free(search_node.connection_info.ip);
     free(fields);
 }
 
