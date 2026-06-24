@@ -181,11 +181,9 @@ void *worker_thread_handler(void *arg)
             pthread_cond_wait(&state.protection.nonempty_queue_cond,
                               &state.protection.mutex);
 
-        if (!queue_empty(state.job_queue)) {
-            ErlangRequest erl = *(ErlangRequest *)queue_head(state.job_queue);
-            handle_job_request(erl, epoll_fd, &state);
-            state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
-        }
+        ErlangRequest erl = *(ErlangRequest *)queue_head(state.job_queue);
+        handle_job_request(erl, epoll_fd, &state);
+        state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
 
         pthread_mutex_unlock(&state.protection.mutex);
     }
