@@ -286,7 +286,6 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
     }
 
     // Eliminamos el job de la tabla de jobs activos
-    free(cell->remote_allocations);
     hashmap_delete(state->job_map, &job_id);
 }
 

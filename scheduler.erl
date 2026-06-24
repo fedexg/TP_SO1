@@ -222,7 +222,7 @@ manage_job_info(Socket, List_Nodes, Job_Id, Job_Info) ->
     GPU_TO_ASK = ammout_to_ask(GPU, GPU_LIST, 1),
     String_To_Send = string_of_ip_request(IP_LIST, CPU_TO_ASK,"cpu") ++
                      string_of_ip_request(IP_LIST, MEM_TO_ASK,"mem") ++ string_of_ip_request(IP_LIST, GPU_TO_ASK, "gpu"),
-    send_to_agent(Socket, request, integer_to_list(Job_Id)++" "++string:trim(String_To_Send)++"\n").
+    send_to_agent(Socket, request, integer_to_list(Job_Id)++" "++string:trim(String_To_Send)).
 % %  
 
 map_node_data(L, Data_Index) ->
