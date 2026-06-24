@@ -225,6 +225,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
         JobQueueData data = {erl, time(NULL)};
 
         pthread_mutex_lock(&state->protection.mutex);
+        log_message("[C]: Metiendo Job a la queue");
         state->job_queue = enqueue(state->job_queue, &data, (QueueCpyFunc)job_copy);
         pthread_mutex_unlock(&state->protection.mutex);
 

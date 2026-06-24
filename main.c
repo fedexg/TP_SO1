@@ -177,16 +177,15 @@ void *worker_thread_handler(void *arg)
         int sleep_time = rand();
         sleep(sleep_time%QUEUE_SLEEP_TIME + 1);
         pthread_mutex_lock(&state.protection.mutex);
+        log_message("[C]: Worker tiene el mutex");
         while (queue_empty(state.job_queue))
             pthread_cond_wait(&state.protection.nonempty_queue_cond,
                               &state.protection.mutex);
 
-        if (!queue_empty(state.job_queue)) {
-            ErlangRequest erl = *(ErlangRequest *)queue_head(state.job_queue);
-            handle_job_request(erl, epoll_fd, &state);
-            state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
-        }
-
+        ErlangRequest erl = *(ErlangRequest *)queue_head(state.job_queue);
+        handle_job_request(erl, epoll_fd, &state);
+        state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
+        log_message("[C]: Worker manejo un job");
         pthread_mutex_unlock(&state.protection.mutex);
     }
 
