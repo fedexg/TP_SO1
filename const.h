@@ -18,7 +18,7 @@
 #define MAX_CPU 8
 #define MAX_GPU 4
 #define MAX_MEM 16384
-#define BUFFER_MAX_SIZE 128
+#define BUFFER_MAX_SIZE 1024
 
 #define CHECKER_QUEUE_USE_TIME          5
 #define QUEUE_SLEEP_TIME                3
