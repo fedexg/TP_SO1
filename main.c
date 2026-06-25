@@ -180,16 +180,18 @@ void *worker_thread_handler(void *arg)
         sleep(sleep_time);
         pthread_mutex_lock(&state.protection.mutex);
         log_message("[C]: Worker tiene el mutex");
-        while (queue_empty(state.job_queue))
+        while (queue_empty(state.job_queue)) {
+            log_message("[C]: Worker: Cola vacía. Esperando");
             pthread_cond_wait(&state.protection.nonempty_queue_cond,
                               &state.protection.mutex);
+        }
 
         JobQueueData job = *(JobQueueData *)queue_head(state.job_queue);
         pthread_mutex_unlock(&state.protection.mutex);
         handle_job_request(job.request, job.time_when_alloc, epoll_fd, &state);
         pthread_mutex_lock(&state.protection.mutex);
         state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
-        log_message("[C]: Worker manejo un job");
+        log_message("[C]: Worker suelta el mutex");
         pthread_mutex_unlock(&state.protection.mutex);
     }
 
@@ -206,10 +208,13 @@ void *checker_thread_handler(void *arg)
         // Si el agente debe usar job_queue, darle tiempo para que lo haga
         sleep(CHECKER_QUEUE_USE_TIME);
         pthread_mutex_lock(&state.protection.mutex);
+        log_message("[C]: Checker tiene el mutex");
 
-        while (queue_empty(state.job_queue))
+        while (queue_empty(state.job_queue)) {
+            log_message("[C]: Checker: Cola vacía. Esperando");
             pthread_cond_wait(&state.protection.nonempty_queue_cond,
                               &state.protection.mutex);
+        }
 
         // Buscamos en cada job de la cola de jobs, y si pasaron más de
         // CHECKER_QUEUE_TIME_UNTIL_DELETE (15) segundos, se envía
@@ -220,16 +225,19 @@ void *checker_thread_handler(void *arg)
             JobQueueData *job = (JobQueueData *)p->data;
             if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE) {
                 char msg[BUFFER_MAX_SIZE] = { 0 };
-                log_message("[C]: El job tomó mucho tiempo. Enviando JOB_TIMEOUT");
+                log_message("[C]: El job %lld tomó mucho tiempo. Enviando JOB_TIMEOUT", job->request.job_id);
                 sprintf(msg, "JOB_TIMEOUT %lld\n", job->request.job_id);
                 send(job->request.erlang_fd, msg, strlen(msg), 0);
+                long long id = job->request.job_id;
                 state.job_queue = delete_from_job_queue(state.job_queue, job);
+                state.timed_out_jobs = list_append(state.timed_out_jobs, &id, (ListCpyFunc)int_copy);
             }
 
             p = next;
         }
 
         pthread_mutex_unlock(&state.protection.mutex);
+        log_message("[C]: Checker suelta el mutex");
     }
 
     return NULL;

@@ -111,17 +111,17 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             hashmap_put(state->job_map, &cell);
         }
 
+        pthread_mutex_lock(&state->protection.mutex);
         // Atendemos solicitudes encoladas en orden
         while (!queue_empty(state->job_queue)) {
             // Debemos proteger la cola para evitar conflictos con
             // worker_thread_handler en main
-            pthread_mutex_lock(&state->protection.mutex);
-            ErlangRequest erl = *(ErlangRequest *)queue_head(state->job_queue);
+            JobQueueData *job = (JobQueueData *)queue_head(state->job_queue);
             state->job_queue = dequeue(state->job_queue, (QueueFreeFunc)job_free);
-            pthread_mutex_unlock(&state->protection.mutex);
-
-            handle_job_request(erl, epoll_fd, state);
+            handle_job_request(job->request, job->time_when_alloc, epoll_fd, state);
         }
+
+        pthread_mutex_unlock(&state->protection.mutex);
 
         break;
     default:

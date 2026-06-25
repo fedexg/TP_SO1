@@ -108,8 +108,10 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
 
         // Sumamos esta petición a la lista de aquellos que recibieron
         // un TIMEOUT
+        pthread_mutex_lock(&state->protection.mutex);
         state->timed_out_jobs = list_append(state->timed_out_jobs, &job_id,
                                             (ListCpyFunc)int_copy);
+        pthread_mutex_unlock(&state->protection.mutex);
         send(erl.erlang_fd, msg, strlen(msg), 0);
         return;
     }
@@ -180,7 +182,15 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
 
             // Contamos la cantidad de GRANTEDs que recibimos de parte del agente C
             char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
-            read_full_line(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1);
+            ssize_t bytes_read = read_full_line(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1);
+            if (bytes_read < 0) {
+
+                // Error de lectura
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    log_message("[C]: No llegó el mensaje entero todavía");
+                    continue;
+                }
+            }
 
             // Con saber que recibimos GRANTED podemos guardar los recursos;
             // no necesitamos el job_id en este caso
@@ -324,7 +334,11 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
     JobMapCell *job = hashmap_search(state->job_map, &job_id);
     char buffer[BUFFER_MAX_SIZE] = { 0 };
 
+    pthread_mutex_lock(&state->protection.mutex);
+
     log_message("[C]: Procesando un status sobre el job id %lld", job_id);
+
+    log_message("[C]: queue_empty: %d list_empty: %d", queue_empty(state->job_queue), list_empty(state->timed_out_jobs));
 
     // Si el job existe, le informamos al cliente de Erlang que
     // fue dado. De lo contrario, si está en la cola es porque
@@ -344,14 +358,16 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
     }
 
     if (find_in_list(state->timed_out_jobs, job_id)) {
+        pthread_mutex_unlock(&state->protection.mutex);
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_TIMEOUT %lld\n", job_id);
         log_message("[C]: Enviando timeout al cliente Erlang");
 
         pthread_mutex_lock(&state->protection.mutex);
         state->timed_out_jobs = delete_from_timed_out_jobs(state->timed_out_jobs, job_id);
-        pthread_mutex_unlock(&state->protection.mutex);
     }
+
+    pthread_mutex_unlock(&state->protection.mutex);
 
     // Enviamos el mensaje al cliente de Erlang que nos preguntó
     send(erl.erlang_fd, buffer, strlen(buffer), 0);
