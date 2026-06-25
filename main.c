@@ -1,3 +1,5 @@
+// TODO: matarse
+// TODO: hilo que solamente anuncie! (ez)
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -174,8 +176,8 @@ int main(int argc, char **argv)
 void *worker_thread_handler(void *arg)
 {
     while (true) {
-        int sleep_time = rand();
-        sleep(sleep_time%QUEUE_SLEEP_TIME + 1);
+        int sleep_time = rand() % QUEUE_SLEEP_TIME + 1;
+        sleep(sleep_time);
         pthread_mutex_lock(&state.protection.mutex);
         log_message("[C]: Worker tiene el mutex");
         while (queue_empty(state.job_queue))
@@ -213,7 +215,6 @@ void *checker_thread_handler(void *arg)
         // CHECKER_QUEUE_TIME_UNTIL_DELETE (15) segundos, se envía
         // un timeout al cliente de Erlang que lo pidió
         for (QueueNode *p = state.job_queue; p != NULL; p = p->next) {
-            QueueNode *next = p->next;
             JobQueueData *job = (JobQueueData *)p->data;
             if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE) {
                 char msg[BUFFER_MAX_SIZE] = { 0 };
@@ -221,9 +222,6 @@ void *checker_thread_handler(void *arg)
                 send(job->request.erlang_fd, msg, strlen(msg), 0);
                 delete_from_job_queue(job);
             }
-
-            // Hacemos esto para prevenir un posible use-after-free
-            p = next;
         }
 
         pthread_mutex_unlock(&state.protection.mutex);
