@@ -607,7 +607,7 @@ void *epoll_handler(void *arg)
                 case CONN_TYPE_UDP:
                     log_message("[C]: Manejando evento de socket de broadcast UDP");
                     // Si es el socket de broadcast, lo manejamos por separado
-                    handle_udp_packet(events[i].data.fd);
+                    handle_udp_packet(ctx->fd);
                     break;
 
                 case CONN_TYPE_CLIENT_REMOTE:

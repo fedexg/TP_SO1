@@ -18,7 +18,7 @@
 
 bool find_in_queue(Queue queue, long long id);
 bool find_in_list(List list, long long id);
-void delete_from_timed_out_jobs(List timed_out_jobs, long long id);
+List delete_from_timed_out_jobs(List timed_out_jobs, long long id);
 void send_release_to_agent(Hashmap node_map, ConnectionInfo conn_info, long long job_id,
                             const char *resource, int amount, int epoll_fd);
 
@@ -347,7 +347,10 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
         memset(buffer, 0, BUFFER_MAX_SIZE - 1);
         sprintf(buffer, "JOB_TIMEOUT %lld\n", job_id);
         log_message("[C]: Enviando timeout al cliente Erlang");
-        delete_from_timed_out_jobs(state->timed_out_jobs, job_id);
+
+        pthread_mutex_lock(&state->protection.mutex);
+        state->timed_out_jobs = delete_from_timed_out_jobs(state->timed_out_jobs, job_id);
+        pthread_mutex_unlock(&state->protection.mutex);
     }
 
     // Enviamos el mensaje al cliente de Erlang que nos preguntó
@@ -379,23 +382,21 @@ bool find_in_list(List list, long long id)
 }
 
 // Elimina un job que recibió un TIMEOUT con id 'id'
-void delete_from_timed_out_jobs(List timed_out_jobs, long long id)
+List delete_from_timed_out_jobs(List timed_out_jobs, long long id)
 {
-    ListNode *node_before = timed_out_jobs;
-    if (*(long long *)node_before->data == id){
-        free(node_before->data);
+    if (list_empty(timed_out_jobs))
+        return timed_out_jobs;
+
+    long long *data = (long long *)timed_out_jobs->data;
+    if (*data == id) {
+        ListNode *node = timed_out_jobs;
         timed_out_jobs = timed_out_jobs->next;
-        free(node_before);
-    } else {
-        ListNode *actual_node = timed_out_jobs->next;
-        for(; *(long long *)actual_node->data != id && actual_node != NULL; actual_node = actual_node->next)
-            node_before = node_before->next;
-        if (actual_node != NULL) {
-            node_before->next = actual_node->next;
-            free(actual_node->data);
-            free(actual_node);
-        }
+        free(node);
+        return timed_out_jobs;
     }
+
+    timed_out_jobs->next = delete_from_timed_out_jobs(timed_out_jobs->next, id);
+    return timed_out_jobs;
 }
 
 // Maneja una petición del tipo GET_NODES
