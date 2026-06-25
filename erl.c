@@ -206,9 +206,12 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
     if (num_granted < erl.num_allocations) {
         log_message("[C]: Enviando JOB_DENIED al cliente Erlang");
 
-        memset(msg, 0, BUFFER_MAX_SIZE - 1);
-        sprintf(msg, "JOB_DENIED %lld\n", job_id);
-        send(erl.erlang_fd, msg, strlen(msg), 0);
+        if (!erl.sent_message) {
+            memset(msg, 0, BUFFER_MAX_SIZE - 1);
+            sprintf(msg, "JOB_DENIED %lld\n", job_id);
+            send(erl.erlang_fd, msg, strlen(msg), 0);
+            erl.sent_message = true;
+        }
 
         for (ListNode *p = agent_fds; p != NULL; p = p->next) {
             for (int i = 0; i < erl.num_allocations; ++i) {
@@ -259,8 +262,12 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
     log_message("[C]: Enviando JOB_GRANTED al cliente Erlang");
 
     memset(msg, 0, BUFFER_MAX_SIZE - 1);
-    sprintf(msg, "JOB_GRANTED %lld\n", job_id);
-    send(erl.erlang_fd, msg, strlen(msg), 0);
+
+    if (!erl.sent_message) {
+        sprintf(msg, "JOB_GRANTED %lld\n", job_id);
+        send(erl.erlang_fd, msg, strlen(msg), 0);
+        erl.sent_message = true;
+    }
 }
 
 // Maneja una petición del tipo JOB_RELEASE
@@ -272,7 +279,7 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
     // No encontramos un trabajo con este id, informarlo al cliente
     if (cell == NULL) {
         char error_buf[1024] = { 0 };
-        sprintf(error_buf, "JOB_ERROR %lld", job_id); // El job id no existe
+        sprintf(error_buf, "JOB_ERROR %lld\n", job_id); // El job id no existe
         send(erl.erlang_fd, error_buf, strlen(error_buf), 0);
         log_message("[C]: Enviando JOB_ERROR al cliente Erlang");
         return;

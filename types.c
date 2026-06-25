@@ -108,6 +108,7 @@ JobQueueData *job_copy(JobQueueData *j)
     int num_allocations = j->request.num_allocations;
     NodeAllocationInfo *node_allocations = j->request.node_allocations;
     time_t time_when_alloc = j->time_when_alloc;
+    bool sent_message = j->request.sent_message;
 
     JobQueueData *cloned = malloc(sizeof(JobQueueData));
     cloned->request.erlang_fd = erlang_fd;
@@ -116,6 +117,7 @@ JobQueueData *job_copy(JobQueueData *j)
     cloned->request.node_allocations = calloc(num_allocations, sizeof(NodeAllocationInfo));
     memcpy(cloned->request.node_allocations, node_allocations, sizeof(NodeAllocationInfo)*num_allocations);
     cloned->time_when_alloc = time_when_alloc;
+    cloned->request.sent_message = sent_message;
 
     return cloned;
 }
@@ -125,6 +127,12 @@ void job_free(JobQueueData *j)
 {
     free(j->request.node_allocations);
     free(j);
+}
+
+// Compara dos JobQueueData por job id
+int job_cmp(JobQueueData *j1, JobQueueData *j2)
+{
+    return j1->request.job_id - j2->request.job_id;
 }
 
 // Copia un entero
@@ -210,5 +218,6 @@ ErlangRequest parse_erlang_request(Hashmap node_map, int agent_port,
     erl.num_allocations = nodes_len;
     erl.node_allocations = calloc(erl.num_allocations, sizeof(NodeAllocationInfo));
     memcpy(erl.node_allocations, nodes, sizeof(NodeAllocationInfo)*erl.num_allocations);
+    erl.sent_message = false;
     return erl;
 }

@@ -41,7 +41,7 @@ AgentState state;
 
 void *worker_thread_handler(void *arg);
 void *checker_thread_handler(void *arg);
-void delete_from_job_queue(JobQueueData *job);
+Queue delete_from_job_queue(Queue job_queue, JobQueueData *job);
 int init_sockets(void);
 int init_agents_socket(void);
 int init_listen_erlang_socket(void);
@@ -214,14 +214,19 @@ void *checker_thread_handler(void *arg)
         // Buscamos en cada job de la cola de jobs, y si pasaron más de
         // CHECKER_QUEUE_TIME_UNTIL_DELETE (15) segundos, se envía
         // un timeout al cliente de Erlang que lo pidió
-        for (QueueNode *p = state.job_queue; p != NULL; p = p->next) {
+        QueueNode *p = state.job_queue;
+        while (p != NULL) {
+            QueueNode *next = p->next;
             JobQueueData *job = (JobQueueData *)p->data;
             if (difftime(time(NULL), job->time_when_alloc) >= CHECKER_QUEUE_TIME_UNTIL_DELETE) {
                 char msg[BUFFER_MAX_SIZE] = { 0 };
-                sprintf(msg, "JOB_TIMEOUT %lld", job->request.job_id);
+                log_message("[C]: El job tomó mucho tiempo. Enviando JOB_TIMEOUT");
+                sprintf(msg, "JOB_TIMEOUT %lld\n", job->request.job_id);
                 send(job->request.erlang_fd, msg, strlen(msg), 0);
-                delete_from_job_queue(job);
+                state.job_queue = delete_from_job_queue(state.job_queue, job);
             }
+
+            p = next;
         }
 
         pthread_mutex_unlock(&state.protection.mutex);
@@ -231,32 +236,21 @@ void *checker_thread_handler(void *arg)
 }
 
 // Elimina un job de job_queue
-void delete_from_job_queue(JobQueueData *job)
+Queue delete_from_job_queue(Queue job_queue, JobQueueData *job)
 {
-    // O la cola está vacía o el job no es válido.
-    // Entonces no se elimina nada
-    if (state.job_queue == NULL || job == NULL)
-        return;
+    if (queue_empty(job_queue))
+        return job_queue;
 
-    QueueNode *prev = NULL;
-    QueueNode *curr = state.job_queue;
-
-    // Buscamos el job en la cola que coincida con job
-    while (curr != NULL) {
-        if (curr->data == job) {
-            if (prev == NULL) // El job que buscamos está en el head de la cola
-                state.job_queue = curr->next;
-            else // El job que buscamos está después
-                prev->next = curr->next;
-
-            job_free(job);
-            free(curr);
-            return;
-        }
-
-        prev = curr;
-        curr = curr->next;
+    JobQueueData *data = (JobQueueData *)queue_head(job_queue);
+    if (job_cmp(data, job) == 0) {
+        QueueNode *node = job_queue;
+        job_queue = job_queue->next;
+        free(node);
+        return job_queue;
     }
+
+    job_queue->next = delete_from_job_queue(job_queue->next, job);
+    return job_queue;
 }
 
 // Inicializa los sockets del agente C, el cliente Erlang

@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <time.h>
+
 #include "const.h"
 #include "ds/hashmap.h"
 #include "ds/queue.h"
@@ -75,6 +76,7 @@ typedef struct _ErlangRequest {
     long long job_id;
     NodeAllocationInfo *node_allocations;
     int num_allocations;
+    bool sent_message;
 } ErlangRequest;
 
 // Elemento de la cola de jobs en espera
@@ -109,6 +111,7 @@ void job_cell_free(JobMapCell *jmc);
 unsigned int job_cell_hash(JobMapCell *jmc);
 JobQueueData *job_copy(JobQueueData *j);
 void job_free(JobQueueData *j);
+int job_cmp(JobQueueData *j1, JobQueueData *j2);
 long long *int_copy(long long *x);
 Request parse_request(char **request_fields, int n_fields);
 void request_free(Request *req);
