@@ -67,11 +67,20 @@ job_manager(Socket, Nodes_Info, Job_Id, Job_Info, Client_Pid) ->
         invalid_job ->          %<- El pedido está fuera de los limites admitidos
             Client_Pid ! invalid_job;
         waiting_on_manager ->   %<- Comienza la espera 
-            receive
-                Msg_to_client -> Client_Pid ! Msg_to_client % ¡IMPORTANTE! Durante ésta funcion, el Agente C recibe el pedido y el handler queda en escucha.
-            end
+            job_manager_inbox(Client_Pid, Job_Id) % ¡IMPORTANTE! Durante ésta funcion, el Agente C recibe el pedido y el handler queda en escucha.
     end.
 % %
+
+job_manager_inbox(Client_Pid, Job_Id) -> 
+    receive
+        {Job_Id_Recv, Msg_to_client} ->
+            case Job_Id_Recv == Job_Id of % Se realiza esta comparacion en caso de que el Agente C envie mas informacion de la pedida
+                true ->
+                    Client_Pid ! Msg_to_client; 
+                false ->
+                    job_manager_inbox(Client_Pid, Job_Id)
+            end
+    end.
 
 % Guarda, administra y reenvia los datos entrantes del Agente C, hacia el Sch. Erlang. Como la 
 % transmisión de datos es UDP, el manager está preparado para recibir la informacion en datagramas.
@@ -146,12 +155,14 @@ job_request_inbox(Socket, Data, Scheduler_Pid, Manager_Map) ->
         ["NODES" | String_Nodes] -> io:fwrite("[Erlang]: Node data received from the C agent~n"),
                                     Scheduler_Pid ! {nodes, hd(String_Nodes)};
         ["JOB_GRANTED" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" was granted by the C agent~n"),
-                                    maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! valid_job;  %maps:get(list_to_integer(hd(Job_Id)),Manager_Map) == Job_Manager Pid
+                                    Job_Id_Recv = list_to_integer(hd(Job_Id)),
+                                    maps:get(Job_Id_Recv,Manager_Map) ! {Job_Id_Recv,valid_job};  %maps:get(list_to_integer(hd(Job_Id)),Manager_Map) == Job_Manager Pid
         ["JOB_DENIED" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" is on the queue by the C agent~n"),
                                     timer:sleep(5000),                                  %<- Espera inactiva.
                                     send_to_agent(Socket, status, hd(Job_Id)); 
         ["JOB_TIMEOUT" | Job_Id] -> io:fwrite("[Erlang]: Job "++hd(Job_Id)++" was timeouted by the C agent~n"),
-                                    maps:get(list_to_integer(hd(Job_Id)),Manager_Map) ! invalid_job;
+                                    Job_Id_Recv = list_to_integer(hd(Job_Id)),
+                                    maps:get(Job_Id_Recv,Manager_Map) ! {Job_Id_Recv,invalid_job};
         ["JOB_ERROR" | Job_Id] -> io:fwrite("[Erlang]: The C agent has found an error with job_id "++hd(Job_Id)++"~n"),
                                     error_from_agent(list_to_integer(hd(Job_Id)),Manager_Map);
         Any -> io:fwrite("[Erlang]: Command error: ~p~n", [Any])
