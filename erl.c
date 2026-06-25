@@ -19,9 +19,8 @@
 bool find_in_queue(Queue queue, long long id);
 bool find_in_list(List list, long long id);
 void delete_from_timed_out_jobs(List timed_out_jobs, long long id);
-void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job_id,
+void send_release_to_agent(Hashmap node_map, ConnectionInfo conn_info, long long job_id,
                             const char *resource, int amount, int epoll_fd);
-int get_agent_connection(const char *ip, int port, int epoll_fd);
 
 // Manejar requests (si es posible) proveniente de un cliente Erlang
 void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
@@ -131,16 +130,25 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
 
     for (int i = 0; i < erl.num_allocations; ++i) {
         NodeAllocationInfo alloc = erl.node_allocations[i];
+        char *ip = alloc.erlang_connection_info.ip;
+        int port = alloc.erlang_connection_info.port;
 
         // Determinamos a quién hay que enviarle un mensaje
         int agent_fd = alloc.agent_fd;
         if (agent_fd == -1) {
-            agent_fd = get_agent_connection(alloc.erlang_connection_info.ip, alloc.erlang_connection_info.port, epoll_fd);
+            // Buscamos el nodo con la IP y puerto que tenemos
+            // para poder mandarle mensajes
+            NodeMapCell search_node;
+            search_node.connection_info.ip = ip;
+            search_node.connection_info.port = port;
+            NodeMapCell *node = hashmap_search(state->node_map, &search_node);
 
-            if (agent_fd == -1) {
-                error("Error intentando conectarse a un nodo");
-                return;
+            if (node == NULL) {
+                log_message("[C]: Error buscando el nodo %s:%d", ip, port);
+                continue;
             }
+
+            agent_fd = node->socket_fd;
         }
 
         // Preparamos el tipo de recurso a pedir
@@ -156,8 +164,7 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
 
         // Evitamos enviarnos un mensaje a nosotros mismos; simplemente
         // tomamos nuestros propios recursos, y lo consideramos GRANTED
-        if (streq(alloc.erlang_connection_info.ip, my_ip) &&
-                alloc.erlang_connection_info.port == state->agent_port) {
+        if (streq(ip, my_ip) && port == state->agent_port) {
             log_message("[C]: Tomando recursos de nosotros mismos");
             if (exists_resource(&state->node_resources, alloc.res_kind, alloc.amount)) {
                 give_resources(&state->node_resources, alloc.res_kind, alloc.amount);
@@ -178,8 +185,8 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
             // Con saber que recibimos GRANTED podemos guardar los recursos;
             // no necesitamos el job_id en este caso
             if (strncmp(recv_buffer, "GRANTED", 7) == 0) {
-                strcpy(remote_allocs[num_granted].connection_info.ip, alloc.erlang_connection_info.ip);
-                remote_allocs[num_granted].connection_info.port = alloc.erlang_connection_info.port;
+                remote_allocs[num_granted].connection_info.ip = strdup(ip);
+                remote_allocs[num_granted].connection_info.port = port;
                 if (alloc.res_kind == RES_KIND_CPU)
                     remote_allocs[num_granted].resources.current_cpu += alloc.amount;
                 if (alloc.res_kind == RES_KIND_MEM)
@@ -280,15 +287,15 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
     for (int i = 0; i < cell->num_remotely_allocated; i++) {
         RemoteAllocation remote = cell->remote_allocations[i];
         if (remote.resources.current_cpu > 0)
-            send_release_to_agent(state->node_map, remote.connection_info.ip, job_id,
+            send_release_to_agent(state->node_map, remote.connection_info, job_id,
                                   "cpu", remote.resources.current_cpu,
                                   epoll_fd);
         if (remote.resources.current_mem > 0)
-            send_release_to_agent(state->node_map, remote.connection_info.ip, job_id,
+            send_release_to_agent(state->node_map, remote.connection_info, job_id,
                                   "mem", remote.resources.current_mem,
                                   epoll_fd);
         if (remote.resources.current_gpu > 0)
-            send_release_to_agent(state->node_map, remote.connection_info.ip, job_id,
+            send_release_to_agent(state->node_map, remote.connection_info, job_id,
                                   "gpu", remote.resources.current_gpu,
                                   epoll_fd);
     }
@@ -425,22 +432,23 @@ void handle_get_nodes(Hashmap node_map, int erlang_fd)
 }
 
 // Envia un RELEASE al agente especificado por ip
-void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job_id,
+void send_release_to_agent(Hashmap node_map, ConnectionInfo conn_info, long long job_id,
                             const char *resource, int amount, int epoll_fd)
 {
-    // TODO: también usar puerto
-    NodeMapCell *target_node = hashmap_search(node_map, &agent_ip);
+    NodeMapCell search_node;
+    search_node.connection_info = conn_info;
+    NodeMapCell *target_node = hashmap_search(node_map, &search_node);
 
     // El nodo no está en el cluster, así que no hacemos nada
     if (target_node == NULL)
         return;
 
     // Intentamos buscar su descriptor de archivo para enviar el mensaje
-    int fd = get_agent_connection(target_node->connection_info.ip,
-                                  target_node->connection_info.port,
-                                  epoll_fd);
+    int fd = target_node->socket_fd;
     if (fd == -1) {
-        error("Error intentando conectarse a un nodo");
+        log_message("[C]: Error buscando el nodo %s:%d",
+                    target_node->connection_info.ip,
+                    target_node->connection_info.port);
         return;
     }
 
@@ -450,39 +458,4 @@ void send_release_to_agent(Hashmap node_map, const char *agent_ip, long long job
     send(fd, release_msg, strlen(release_msg), 0);
 
     // ¡No cerramos fd para que se quede en la instancia de epoll!
-}
-
-// Encuentra el descriptor de archivo del socket
-// especificado por ip y puerto
-int get_agent_connection(const char *ip, int port, int epoll_fd)
-{
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0)
-        return FAIL;
-
-    set_socket_nonblocking(sock);
-
-    // Guardamos la información del socket
-    struct sockaddr_in agent_addr;
-    memset(&agent_addr, 0, sizeof(agent_addr));
-    agent_addr.sin_family = AF_INET;
-    agent_addr.sin_port = htons(port);
-
-    inet_pton(AF_INET, ip, &agent_addr.sin_addr);
-
-    // Chequeamos que errno sea EINPROGRESS porque sock es no bloqueante
-    int res = connect(sock, (struct sockaddr *)&agent_addr, sizeof(agent_addr));
-    if (res < 0 && errno != EINPROGRESS) {
-        close(sock);
-        return FAIL;
-    }
-
-    // Lo sumamos a la instancia de epoll para registrar eventos
-    // provenientes de este socket
-    if (add_descriptor(epoll_fd, sock, NULL) < 0) {
-        close(sock);
-        return FAIL;
-    }
-
-    return sock;
 }
