@@ -8,7 +8,7 @@
 % %
 start() ->
     Scheduler = spawn(?MODULE, start_scheduler, []),
-    %spawn(?MODULE, client_simulator, [Scheduler]),
+    spawn(?MODULE, client_simulator, [Scheduler]),
     client_simulator(Scheduler).
 % %
 
