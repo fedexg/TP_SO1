@@ -64,6 +64,7 @@ int main(int argc, char **argv)
     // Inicializamos el estado global
     pthread_mutex_init(&state.protection.mutex, NULL);
     pthread_cond_init(&state.protection.nonempty_queue_cond, NULL);
+    pthread_mutex_init(&state.res_protection, NULL);
 
     state.node_resources.cpu = MAX_CPU;
     state.node_resources.gpu = MAX_GPU;
@@ -162,6 +163,7 @@ int main(int argc, char **argv)
     if (close_sockets() < 0)
         return 1;
 
+    pthread_mutex_destroy(&state.res_protection);
     pthread_cond_destroy(&state.protection.nonempty_queue_cond);
     pthread_mutex_destroy(&state.protection.mutex);
     list_free(state.timed_out_jobs, (ListFreeFunc)free);

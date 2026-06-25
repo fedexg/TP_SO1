@@ -83,6 +83,10 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
     LocalResources res = get_initial_resources(state->node_map);
 
     log_message("[C]: Procesando petición de recursos sobre job id %lld", job_id);
+    log_message("[C]: Request: Recursos que tenemos disponibles: %d CPU, %d MEM %d GPU",
+                state->node_resources.current_cpu,
+                state->node_resources.current_mem,
+                state->node_resources.current_gpu);
 
     int cpu = 0, mem = 0, gpu = 0;
 
@@ -167,12 +171,14 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
         // Evitamos enviarnos un mensaje a nosotros mismos; simplemente
         // tomamos nuestros propios recursos, y lo consideramos GRANTED
         if (streq(ip, my_ip) && port == state->agent_port) {
-            log_message("[C]: Tomando recursos de nosotros mismos");
+            log_message("[C]: Tomando recursos de nosotros mismos: %s:%d", ip, port);
+            pthread_mutex_lock(&state->res_protection);
             if (exists_resource(&state->node_resources, alloc.res_kind, alloc.amount)) {
                 give_resources(&state->node_resources, alloc.res_kind, alloc.amount);
                 increase_resources(&local, alloc.res_kind, alloc.amount);
                 ++num_granted;
             }
+            pthread_mutex_unlock(&state->res_protection);
         } else {
             log_message("[C]: Enviando RESERVE al agente C pedido");
 
@@ -223,20 +229,28 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
             erl.sent_message = true;
         }
 
+        // Primero chequeamos si nosotros liberamos los recursos
+        for (int i = 0; i < erl.num_allocations; ++i) {
+            NodeAllocationInfo alloc = erl.node_allocations[i];
+            if (streq(alloc.erlang_connection_info.ip, my_ip) &&
+                    alloc.erlang_connection_info.port == state->agent_port) {
+                log_message("[C]: Devolviendo recursos a nosotros mismos %s:%d", my_ip, state->agent_port);
+                pthread_mutex_lock(&state->res_protection);
+                increase_resources(&state->node_resources, alloc.res_kind, alloc.amount);
+                pthread_mutex_unlock(&state->res_protection);
+            }
+        }
+
+        // Luego buscamos en los otros nodos
         for (ListNode *p = agent_fds; p != NULL; p = p->next) {
             for (int i = 0; i < erl.num_allocations; ++i) {
                 NodeAllocationInfo alloc = erl.node_allocations[i];
-                if (streq(alloc.erlang_connection_info.ip, my_ip) &&
-                        alloc.erlang_connection_info.port == state->agent_port)
-                    increase_resources(&state->node_resources, alloc.res_kind, alloc.amount);
-                else {
-                    if (*(int *)p->data == alloc.agent_fd) {
-                        log_message("[C]: Enviando RELEASE al agente de C al que se le pidió recursos");
+                if (*(int *)p->data == alloc.agent_fd) {
+                    log_message("[C]: Enviando RELEASE al agente de C al que se le pidió recursos");
 
-                        char buffer[BUFFER_MAX_SIZE]  = { 0 };
-                        sprintf(buffer, "RELEASE %lld\n", job_id);
-                        send(alloc.agent_fd, buffer, strlen(buffer), 0);
-                    }
+                    char buffer[BUFFER_MAX_SIZE]  = { 0 };
+                    sprintf(buffer, "RELEASE %lld\n", job_id);
+                    send(alloc.agent_fd, buffer, strlen(buffer), 0);
                 }
             }
         }
@@ -330,6 +344,11 @@ void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
 // Maneja una petición del tipo JOB_STATUS
 void handle_job_status(ErlangRequest erl, AgentState *state)
 {
+    log_message("[C]: Status: Recursos que tenemos disponibles: %d CPU, %d MEM %d GPU",
+                state->node_resources.current_cpu,
+                state->node_resources.current_mem,
+                state->node_resources.current_gpu);
+
     long long job_id = erl.job_id;
     JobMapCell *job = hashmap_search(state->job_map, &job_id);
     char buffer[BUFFER_MAX_SIZE] = { 0 };
@@ -337,8 +356,6 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
     pthread_mutex_lock(&state->protection.mutex);
 
     log_message("[C]: Procesando un status sobre el job id %lld", job_id);
-
-    log_message("[C]: queue_empty: %d list_empty: %d", queue_empty(state->job_queue), list_empty(state->timed_out_jobs));
 
     // Si el job existe, le informamos al cliente de Erlang que
     // fue dado. De lo contrario, si está en la cola es porque

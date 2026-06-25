@@ -29,12 +29,18 @@ void give_resources(LocalResources *res, ResourceKind kind, int amount)
     switch (kind) {
     case RES_KIND_CPU:
         res->current_cpu -= amount;
+        if (res->current_cpu <= 0)
+            res->current_cpu = 0;
         break;
     case RES_KIND_MEM:
         res->current_mem -= amount;
+        if (res->current_mem <= 0)
+            res->current_mem = 0;
         break;
     case RES_KIND_GPU:
         res->current_gpu -= amount;
+        if (res->current_gpu <= 0)
+            res->current_gpu = 0;
         break;
     default:
         break;
@@ -47,12 +53,18 @@ void increase_resources(LocalResources *res, ResourceKind kind, int amount)
     switch (kind) {
     case RES_KIND_CPU:
         res->current_cpu += amount;
+        if (res->current_cpu >= res->cpu)
+            res->current_cpu = res->cpu;
         break;
     case RES_KIND_MEM:
         res->current_mem += amount;
+        if (res->current_mem >= res->mem)
+            res->current_mem = res->mem;
         break;
     case RES_KIND_GPU:
         res->current_gpu += amount;
+        if (res->current_gpu >= res->gpu)
+            res->current_gpu = res->gpu;
         break;
     default:
         break;

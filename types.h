@@ -99,6 +99,7 @@ typedef struct AgentState {
     Queue job_queue;
     List timed_out_jobs;
     MutexCond protection; // Usamos esto para manipular job_queue atomicamente
+    pthread_mutex_t res_protection;
 } AgentState;
 
 NodeMapCell *node_cell_copy(NodeMapCell *nmp);
