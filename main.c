@@ -72,7 +72,7 @@ int main(int argc, char **argv)
     state.node_resources.current_cpu = state.node_resources.cpu;
     state.node_resources.current_gpu = state.node_resources.gpu;
     state.node_resources.current_mem = state.node_resources.mem;
-
+    
     state.node_map = hashmap_make(HASHMAP_INITIAL_CAP, (CopyFunc)node_cell_copy,
                                  (CmpFunc)node_cell_cmp,
                                  (FreeFunc)node_cell_free,
@@ -94,9 +94,23 @@ int main(int argc, char **argv)
     } else if (argc < 3) {
         agent_port = atoi(argv[1]);
         erlang_port = DEFAULT_ERLANG_PORT;
+    } else if (argc < 4){
+        agent_port = atoi(argv[1]);
+        erlang_port = atoi(argv[2]);
     } else {
         agent_port = atoi(argv[1]);
         erlang_port = atoi(argv[2]);
+        //Debería ser el 3er argumento una cadena de la forma
+        //"n1:n2:n3"
+        int len = 0, custom_cpu, custom_gpu, custom_mem;
+        char **custom_local_node = split(argv[3],":",&len);
+        custom_cpu = atoi(custom_local_node[0]);
+        custom_gpu = atoi(custom_local_node[1]);
+        custom_mem = atoi(custom_local_node[2]);
+        printf("%d:%d:%d\n",custom_cpu,custom_gpu,custom_mem);
+        state.node_resources.current_cpu = (custom_cpu >= 0 ? custom_cpu : 0);
+        state.node_resources.current_gpu = (custom_gpu >= 0 ? custom_gpu : 0);
+        state.node_resources.current_mem = (custom_mem >= 0 ? custom_mem : 0);
     }
     state.agent_port = agent_port;
 

@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <time.h>
+#include <stdbool.h>
 
 #include "const.h"
 #include "ds/hashmap.h"

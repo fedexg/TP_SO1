@@ -97,3 +97,13 @@ aplazado para mas tarde devolviendolo a la cola.
 
 % Guardar Clientes en un mapa que sea Key:Job_ID, Data:proces_Id
 % Guardar en la Queue {Job_Id, Request}
+
+
+NOTAS DE ERRORES:
+- Si el Agente C no logra enviar un ANNOUNCE a otro Agente, inmediatamente despues de 
+iniciar su ejecucion, PARECE que comienza a leer su propio envio ANNOUNCE y no vuelve a 
+enviar efectivamente a otros Agentes.
+- types.h y types.c no tenian la libreria de strbool.h
+- Dos agentes (nuestros) alojados en la misma computadora se comportan de forma extraña.
+Parece que uno se queda enviando ANNOUNCE sin procesarlos, mientras que el otro recibe los 
+ANNOUNCE tanto propios como del agente copia.
