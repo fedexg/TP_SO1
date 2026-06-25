@@ -8,7 +8,7 @@
 % %
 start() ->
     Scheduler = spawn(?MODULE, start_scheduler, []),
-    spawn(?MODULE, client_simulator, [Scheduler]),
+    %spawn(?MODULE, client_simulator, [Scheduler]),
     client_simulator(Scheduler).
 % %
 
@@ -82,7 +82,7 @@ message_manager(Socket, Scheduler_Pid, Manager_Map) ->
             New_Manager_Map = maps:put(Job_Id, Job_Manager, Manager_Map),
             Job_Manager ! added_to_map,
             message_manager(Socket, Scheduler_Pid, New_Manager_Map)
-    after 0 ->                                                           %<- Siempre que el buzon no este vacio, pasa inmediatamente a este bloque.
+    after 1 ->                                                           %<- Siempre que el buzon no este vacio, pasa inmediatamente a este bloque.
         case gen_tcp:recv(Socket, 0) of                                  %<- Espera a que responda el Agente C.  
             {ok, Data} ->
                 io:fwrite("[Erlang]: Data received~n"),                   
