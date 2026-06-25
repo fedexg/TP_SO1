@@ -183,7 +183,9 @@ void *worker_thread_handler(void *arg)
                               &state.protection.mutex);
 
         ErlangRequest erl = *(ErlangRequest *)queue_head(state.job_queue);
+        pthread_mutex_unlock(&state.protection.mutex);
         handle_job_request(erl, epoll_fd, &state);
+        pthread_mutex_lock(&state.protection.mutex);
         state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
         log_message("[C]: Worker manejo un job");
         pthread_mutex_unlock(&state.protection.mutex);
