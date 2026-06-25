@@ -23,7 +23,7 @@ void send_release_to_agent(Hashmap node_map, ConnectionInfo conn_info, long long
                             const char *resource, int amount, int epoll_fd);
 
 // Manejar requests (si es posible) proveniente de un cliente Erlang
-void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
+void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *state)
 {
     log_message("[C]: Procesando cliente Erlang con descriptor %d", erlang_fd);
     char buffer[BUFFER_MAX_SIZE] = { 0 };
@@ -59,7 +59,7 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
 
         // Manejamos el tipo de petición que se nos hizo
         if (streq(request_fields[0], "JOB_REQUEST"))
-            handle_job_request(erl, epoll_fd, state);
+            handle_job_request(erl, time, epoll_fd, state);
         else if (streq(request_fields[0], "JOB_RELEASE"))
             handle_job_release(erl, epoll_fd, state);
         else if (streq(request_fields[0], "JOB_STATUS"))
@@ -76,7 +76,7 @@ void handle_erlang_client(int erlang_fd, int epoll_fd, AgentState *state)
 }
 
 // Maneja una petición del tipo JOB_REQUEST
-void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
+void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentState *state)
 {
     char msg[BUFFER_MAX_SIZE] = { 0 };
     long long job_id = erl.job_id;
@@ -228,8 +228,14 @@ void handle_job_request(ErlangRequest erl, int epoll_fd, AgentState *state)
             }
         }
 
+        time_t current_time;
+        if (find_in_queue(state->job_queue, erl.job_id))
+            current_time = time_req;
+        else
+            current_time = time(NULL);
+        
         free(remote_allocs);
-        JobQueueData data = {erl, time(NULL)};
+        JobQueueData data = {erl, current_time};
 
         pthread_mutex_lock(&state->protection.mutex);
         log_message("[C]: Metiendo Job a la queue");

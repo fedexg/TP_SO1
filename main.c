@@ -184,9 +184,9 @@ void *worker_thread_handler(void *arg)
             pthread_cond_wait(&state.protection.nonempty_queue_cond,
                               &state.protection.mutex);
 
-        ErlangRequest erl = *(ErlangRequest *)queue_head(state.job_queue);
+        JobQueueData job = *(JobQueueData *)queue_head(state.job_queue);
         pthread_mutex_unlock(&state.protection.mutex);
-        handle_job_request(erl, epoll_fd, &state);
+        handle_job_request(job.request, job.time_when_alloc, epoll_fd, &state);
         pthread_mutex_lock(&state.protection.mutex);
         state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
         log_message("[C]: Worker manejo un job");
@@ -621,7 +621,7 @@ void *epoll_handler(void *arg)
                     break;
 
                 case CONN_TYPE_CLIENT_ERLANG:
-                    handle_erlang_client(ctx->fd, epoll_fd, &state);
+                    handle_erlang_client(ctx->fd, time(NULL), epoll_fd, &state);
                     break;
 
                 case CONN_TYPE_TIMER: {
