@@ -47,7 +47,7 @@ int init_udp_socket(void);
 int init_timer(void);
 int init_epoll(void);
 int startup(void);
-void send_udp_announce(void);
+void *send_udp_announce(void *arg);
 int add_descriptors(void);
 void *epoll_handler(void *arg);
 void check_agent_expiration_time(void);
@@ -163,6 +163,10 @@ int main(int argc, char **argv)
 
     pthread_t epoll_thread;
     if (pthread_create(&epoll_thread, NULL, epoll_handler, NULL) < 0)
+        return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
+
+    pthread_t announce_thread;
+    if (pthread_create(&announce_thread, NULL, send_udp_announce, NULL) < 0)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
     pthread_join(checker_thread, NULL);
@@ -468,7 +472,7 @@ int init_epoll(void)
 int startup(void)
 {
     // Anuncia su existencia
-    send_udp_announce();
+    send_udp_announce(NULL);
 
     struct epoll_event startup_events[EPOLL_MAX_EVENTS];
     time_t start_time = time(NULL);
@@ -488,7 +492,7 @@ int startup(void)
 
 // Anuncia la existencia del agente C usando el siguiente mensaje:
 // ANNOUNCE <port> cpu:<x> mem:<y> gpu:<z>
-void send_udp_announce(void)
+void *send_udp_announce(void *arg)
 {
     log_message("[C]: Enviando ANNOUNCE a los otros agentes");
 
@@ -515,6 +519,8 @@ void send_udp_announce(void)
 
     if (bytes < 0)
         error("Error intentando enviar ANNOUNCE");
+
+    return NULL;
 }
 
 // Añade los descriptores necesarios a la instancia de epoll
@@ -711,7 +717,7 @@ void check_agent_expiration_time(void)
     // Avisamos que estamos vivos cada cinco segundos
     ++seconds_passed;
     if (seconds_passed >= 5) {
-        send_udp_announce();
+        send_udp_announce(NULL);
         seconds_passed = 0;
     }
 }
@@ -769,11 +775,10 @@ void handle_udp_packet(int udp_fd)
     //
     // Entonces si quiero el campo de CPU, fields[2] + 4 te da <x>
     // Misma situación con mem y gpu
-    LocalResources resources = {
-        atoi(fields[2] + 4),
-        atoi(fields[3] + 4),
-        atoi(fields[4] + 4),
-    };
+    LocalResources resources = { 0 };
+    resources.cpu = atoi(fields[2] + 4);
+    resources.mem = atoi(fields[3] + 4);
+    resources.gpu = atoi(fields[4] + 4);
 
     node->resources = resources;
     node->time_when_called = time(NULL);
