@@ -34,7 +34,6 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
         error("Error intentando leer de un agente de C");
         handle_unexpected_disconnection(state->node_map, state->job_map,
                                         &state->node_resources, c_agent_fd);
-
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c_agent_fd, NULL);
         close(c_agent_fd);
     } else {
@@ -211,13 +210,14 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
         }
     }
 
+    // No hay desconexión inesperada; proseguimos
+    if (dead_node == NULL)
+        return;
+
     log_message("[C]: Manejando conexión inesperada del nodo %s:%s",
                 dead_node->connection_info.ip,
                 dead_node->connection_info.port);
 
-    // No hay desconexión inesperada; proseguimos
-    if (dead_node == NULL)
-        return;
 
     // Liberamos los recursos de los jobs que dependan de este nodo
     release_affected_jobs(dead_node, node_map, job_map, node_resources);
