@@ -31,7 +31,6 @@ void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *
     // Leemos el mensaje que nos envía el cliente Erlang
     ssize_t bytes_read = read_full_line(erlang_fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read < 0) {
-
         // Error de lectura
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
@@ -39,14 +38,30 @@ void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *
         error("Error intentando leer de un cliente Erlang");
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, erlang_fd, NULL);
         close(erlang_fd);
-    } else if (bytes_read == 0)
+    } else if (bytes_read == 0) {
         // Falta que lleguen datos
         return;
-    else {
+    } else {
         int length = 0;
+        char **request_fields = split(buffer, " ", &length);
+
+        // Si no es una petición que conozcamos,
+        // informamos que es desconocida
+        if (streq(request_fields[0], "\n") ||
+            !streq(request_fields[0], "JOB_REQUEST") ||
+            !streq(request_fields[0], "JOB_RELEASE") ||
+            !streq(request_fields[0], "JOB_STATUS") ||
+            !streq(request_fields[0], "GET_NODES")) {
+            // Sacamos el '\n' para mostrar el mensaje
+            request_fields[0][strcspn(request_fields[0], "\n")] = '\0';
+            log_message("[C]: Petición desconocida recibida: \"%s\"", request_fields[0]);
+            char *msg = "Error: comando desconocido\n";
+            send(erlang_fd, msg, strlen(msg), 0);
+            return;
+        }
+
         log_message("[C]: Petición recibida de Erlang: %s", buffer);
 
-        char **request_fields = split(buffer, " ", &length);
         if (streq(request_fields[0], "GET_NODES\n")) {
             handle_get_nodes(state->node_map, erlang_fd);
             return;
@@ -64,12 +79,6 @@ void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *
             handle_job_release(erl, epoll_fd, state);
         else if (streq(request_fields[0], "JOB_STATUS"))
             handle_job_status(erl, state);
-        else { // Si no es una petición que conozcamos,
-               // informamos que es desconocida
-            log_message("[C]: Petición desconocida recibida: %s", request_fields[0]);
-            char *msg = "Error: comando desconocido";
-            send(erlang_fd, msg, strlen(msg), 0);
-        }
 
         free(request_fields);
     }
