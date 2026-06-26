@@ -67,10 +67,17 @@ void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *
             return;
         }
 
-        ErlangRequest erl = parse_erlang_request(state->node_map,
-                                                 state->agent_port,
-                                                 request_fields,
-                                                 length, erlang_fd);
+        ErlangRequest erl;
+        int result = parse_erlang_request(&erl, state->node_map,
+                                         state->agent_port,
+                                         request_fields,
+                                         length, erlang_fd);
+
+        if (result < 0) {
+            char *msg = "Error: petición mal formada\n";
+            send(erlang_fd, msg, strlen(msg), 0);
+            return;
+        }
 
         // Manejamos el tipo de petición que se nos hizo
         if (streq(request_fields[0], "JOB_REQUEST")) {

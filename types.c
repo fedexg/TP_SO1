@@ -176,14 +176,14 @@ Request parse_request(char **request_fields, int n_fields)
 }
 
 // Parsea una petición del tipo JOB_REQUEST <job_id> [@ip:res:amount ... ]
-// para crear un ErlangRequest a partir de la petición
-ErlangRequest parse_erlang_request(Hashmap node_map, int agent_port,
-                                   char **request_fields,
-                                   int request_fields_size, int fd)
+// para llenar los campos de un ErlangRequest a partir de la petición
+int parse_erlang_request(ErlangRequest *erl,
+                         Hashmap node_map, int agent_port,
+                         char **request_fields,
+                         int request_fields_size, int fd)
 {
-    ErlangRequest erl = { 0 };
-    erl.erlang_fd = fd;
-    erl.job_id = atoll(request_fields[1]);
+    erl->erlang_fd = fd;
+    erl->job_id = atoll(request_fields[1]);
 
     int cap = 256;
     NodeAllocationInfo *nodes = calloc(cap, sizeof(NodeAllocationInfo));
@@ -191,10 +191,18 @@ ErlangRequest parse_erlang_request(Hashmap node_map, int agent_port,
 
     // Empezamos desde el arreglo de nodos [@ip:res:amount ... ]
     for (int i = 2; i < request_fields_size; ++i) {
-        char **node_information = split(request_fields[i], ":", NULL);
+        int length = 0;
+        char **node_information = split(request_fields[i], ":", &length);
+
+        // El nodo está mal definido
+        if (length < 3) {
+            free(node_information);
+            free(nodes);
+            return FAIL;
+        }
+
         nodes[nodes_len].erlang_connection_info.ip = strdup(node_information[0] + 1);
         nodes[nodes_len].erlang_connection_info.port = agent_port;
-
         nodes[nodes_len].agent_fd = -1;
 
         // Determinamos qué tipo de recurso se pide
@@ -218,9 +226,9 @@ ErlangRequest parse_erlang_request(Hashmap node_map, int agent_port,
         }
     }
 
-    erl.num_allocations = nodes_len;
-    erl.node_allocations = calloc(erl.num_allocations, sizeof(NodeAllocationInfo));
-    memcpy(erl.node_allocations, nodes, sizeof(NodeAllocationInfo)*erl.num_allocations);
-    erl.sent_message = false;
-    return erl;
+    erl->num_allocations = nodes_len;
+    erl->node_allocations = calloc(erl->num_allocations, sizeof(NodeAllocationInfo));
+    memcpy(erl->node_allocations, nodes, sizeof(NodeAllocationInfo)*erl->num_allocations);
+    erl->sent_message = false;
+    return OK;
 }
