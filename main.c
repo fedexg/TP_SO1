@@ -1,5 +1,3 @@
-// TODO: matarse
-// TODO: hilo que solamente anuncie! (ez)
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -687,8 +685,9 @@ void check_agent_expiration_time(void)
             double diff = difftime(now, node->time_when_called);
             char ip_buffer[BUFFER_MAX_SIZE];
             get_local_ip(ip_buffer, BUFFER_MAX_SIZE- 1);
-            // 
-            if (diff >= 15.0 && !streq(ip_buffer,node->connection_info.ip)) { 
+
+            if (diff >= WAIT_TIME_UNTIL_DELETE &&
+                !streq(ip_buffer, node->connection_info.ip)) {
                 log_message("[C]: Un nodo no se anunció en 15 segundos. Eliminándolo de la tabla");
                 release_affected_jobs(node, state.node_map,
                                       state.job_map, &state.node_resources);
@@ -754,7 +753,7 @@ void handle_udp_packet(int udp_fd)
         atoi(fields[4] + 4),
     };
 
-    log_message("[C]: ANNOUNCE desde %s:%d",
+    log_message("[C]: Se encontró el nodo %s:%d",
             node->connection_info.ip, node->connection_info.port);
     node->resources = resources;
     node->time_when_called = time(NULL);

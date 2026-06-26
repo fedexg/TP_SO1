@@ -133,7 +133,7 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
                            LocalResources *node_resources)
 {
-    log_message("[C]: Liberando jobs dependientes del nodo con IP %s:%s",
+    log_message("[C]: Liberando jobs dependientes del nodo con IP %s:%d",
                 node->connection_info.ip,
                 node->connection_info.port);
 

@@ -23,6 +23,7 @@
 #define CHECKER_QUEUE_USE_TIME          5
 #define QUEUE_SLEEP_TIME                3
 #define CHECKER_QUEUE_TIME_UNTIL_DELETE 15.0
+#define WAIT_TIME_UNTIL_DELETE          15.0
 
 #define HASHMAP_INITIAL_CAP 128
 
