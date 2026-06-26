@@ -213,19 +213,21 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
 
             // Avisamos a otro agente C que queremos reservar un recurso
             sprintf(msg, "RESERVE %lld %s %d\n", job_id, resource, alloc.amount);
-            send(agent_fd, msg, strlen(msg), 0);
+            ssize_t bytes_read = send(agent_fd, msg, strlen(msg), 0);
+            if (bytes_read < 0)
+                error("Error enviando mensaje");
 
             // Contamos la cantidad de GRANTEDs que recibimos de parte del agente C
             char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
-            ssize_t bytes_read = read_full_line(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1);
+            bytes_read = read_full_line(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1);
             if (bytes_read < 0) {
-
                 // Error de lectura
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     log_message("[C]: No llegó el mensaje entero todavía");
                     continue;
                 }
             }
+
 
             // Con saber que recibimos GRANTED podemos guardar los recursos;
             // no necesitamos el job_id en este caso
