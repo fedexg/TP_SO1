@@ -728,8 +728,10 @@ void handle_udp_packet(int udp_fd)
                                   (struct sockaddr *)&addr,
                                   &addrlen);
 
-    if (bytes_read <= 0)
+    if (bytes_read <= 0) {
+        log_message("[C]: Error de lectura en ANNOUNCE");
         return;
+    }
 
     // Parseamos el mensaje 'ANNOUNCE' que llegue
     int len = 0;
