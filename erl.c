@@ -47,10 +47,10 @@ void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *
 
         // Si no es una petición que conozcamos,
         // informamos que es desconocida
-        if (streq(request_fields[0], "\n") ||
-            !streq(request_fields[0], "JOB_REQUEST") ||
-            !streq(request_fields[0], "JOB_RELEASE") ||
-            !streq(request_fields[0], "JOB_STATUS") ||
+        if (streq(request_fields[0], "\n") &&
+            !streq(request_fields[0], "JOB_REQUEST") &&
+            !streq(request_fields[0], "JOB_RELEASE") &&
+            !streq(request_fields[0], "JOB_STATUS") &&
             !streq(request_fields[0], "GET_NODES")) {
             // Sacamos el '\n' para mostrar el mensaje
             request_fields[0][strcspn(request_fields[0], "\n")] = '\0';
@@ -73,12 +73,28 @@ void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *
                                                  length, erlang_fd);
 
         // Manejamos el tipo de petición que se nos hizo
-        if (streq(request_fields[0], "JOB_REQUEST"))
+        if (streq(request_fields[0], "JOB_REQUEST")) {
+            if (length < 3) {
+                char *msg = "Error: JOB_REQUEST mal formado\n";
+                send(erlang_fd, msg, strlen(msg), 0);
+                return;
+            }
             handle_job_request(erl, time, epoll_fd, state);
-        else if (streq(request_fields[0], "JOB_RELEASE"))
+        } else if (streq(request_fields[0], "JOB_RELEASE")) {
+            if (length < 2) {
+                char *msg = "Error: JOB_RELEASE mal formado\n";
+                send(erlang_fd, msg, strlen(msg), 0);
+                return;
+            }
             handle_job_release(erl, epoll_fd, state);
-        else if (streq(request_fields[0], "JOB_STATUS"))
+        } else if (streq(request_fields[0], "JOB_STATUS")) {
+            if (length < 2) {
+                char *msg = "Error: JOB_STATUS mal formado\n";
+                send(erlang_fd, msg, strlen(msg), 0);
+                return;
+            }
             handle_job_status(erl, state);
+        }
 
         free(request_fields);
     }
