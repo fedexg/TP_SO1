@@ -767,7 +767,38 @@ void handle_udp_packet(int udp_fd)
         node = malloc(sizeof(NodeMapCell));
         node->connection_info.ip = strdup(inet_ntoa(addr.sin_addr));
         node->connection_info.port = atoi(fields[1]);
-        node->socket_fd = -1;
+
+        // Abrimos una conexión a este nodo
+        int sock = socket(AF_INET, SOCK_STREAM, 0);
+        struct sockaddr_in addr;
+        socklen_t addrlen = sizeof(addr);
+
+        log_message("[C]: Generando conexión con el nodo %s:%d",
+                node->connection_info.ip,
+                node->connection_info.port);
+
+        memset(&addr, 0, addrlen);
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(node->connection_info.port);
+        inet_pton(AF_INET, node->connection_info.ip, &addr.sin_addr);
+
+        if (connect(sock, (struct sockaddr *)&addr, addrlen) < 0) {
+            error("Conexión inválida");
+            close(sock);
+            free(node->connection_info.ip);
+            free(node);
+            return;
+        }
+
+        node->socket_fd = sock;
+        if (add_descriptor(epoll_fd, sock, NULL) < 0) {
+            error("Error intentando añadir el nodo a la instancia de epoll");
+            node->socket_fd = -1;
+            close(sock);
+            free(node->connection_info.ip);
+            free(node);
+            return;
+        }
     }
 
     // fields tiene la pinta
