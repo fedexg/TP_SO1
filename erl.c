@@ -47,13 +47,11 @@ void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *
 
         // Si no es una petición que conozcamos,
         // informamos que es desconocida
-        if (streq(request_fields[0], "\n") &&
-            !streq(request_fields[0], "JOB_REQUEST") &&
+        if (streq(request_fields[0], "\n") ||
+           (!streq(request_fields[0], "JOB_REQUEST") &&
             !streq(request_fields[0], "JOB_RELEASE") &&
             !streq(request_fields[0], "JOB_STATUS") &&
-            !streq(request_fields[0], "GET_NODES")) {
-            // Sacamos el '\n' para mostrar el mensaje
-            request_fields[0][strcspn(request_fields[0], "\n")] = '\0';
+            !streq(request_fields[0], "GET_NODES"))) {
             log_message("[C]: Petición desconocida recibida: \"%s\"", request_fields[0]);
             char *msg = "Error: comando desconocido\n";
             send(erlang_fd, msg, strlen(msg), 0);
