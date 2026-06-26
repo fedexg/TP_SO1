@@ -178,7 +178,7 @@ Request parse_request(char **request_fields, int n_fields)
 // Parsea una petición del tipo JOB_REQUEST <job_id> [@ip:res:amount ... ]
 // para llenar los campos de un ErlangRequest a partir de la petición
 int parse_erlang_request(ErlangRequest *erl,
-                         Hashmap node_map, int agent_port,
+                         Hashmap node_map,
                          char **request_fields,
                          int request_fields_size, int fd)
 {
@@ -202,7 +202,7 @@ int parse_erlang_request(ErlangRequest *erl,
         }
 
         nodes[nodes_len].erlang_connection_info.ip = strdup(node_information[0] + 1);
-        nodes[nodes_len].erlang_connection_info.port = agent_port;
+        nodes[nodes_len].erlang_connection_info.port = find_port(node_map, node_information[0] + 1);
         nodes[nodes_len].agent_fd = -1;
 
         // Determinamos qué tipo de recurso se pide

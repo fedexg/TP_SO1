@@ -118,7 +118,7 @@ long long *int_copy(long long *x);
 Request parse_request(char **request_fields, int n_fields);
 void request_free(Request *req);
 int parse_erlang_request(ErlangRequest *erl,
-                         Hashmap node_map, int agent_port,
+                         Hashmap node_map,
                          char **request_fields,
                          int request_fields_size, int fd);
 

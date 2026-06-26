@@ -10,6 +10,7 @@
 
 #include "const.h"
 #include "utils.h"
+#include "types.h"
 
 // Imprime msg junto a un error de mensaje
 // determinado por errno
@@ -129,4 +130,21 @@ ssize_t read_full_line(int fd, char *buffer, int max_size)
 
     buffer[total] = '\0';
     return total;
+}
+
+// Encuentra el puerto de un nodo con una ip dada
+int find_port(Hashmap node_map, char *ip)
+{
+    int port = -1;
+    for (int i = 0; i < node_map->cap; ++i) {
+        bool exists_item = node_map->items[i].data != NULL &&
+                            !node_map->items[i].deleted;
+        if (exists_item) {
+            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
+            if (streq(ip, node->connection_info.ip))
+                return node->connection_info.port;
+        }
+    }
+
+    return port;
 }

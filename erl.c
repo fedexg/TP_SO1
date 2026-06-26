@@ -67,7 +67,6 @@ void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *
 
         ErlangRequest erl;
         int result = parse_erlang_request(&erl, state->node_map,
-                                         state->agent_port,
                                          request_fields,
                                          length, erlang_fd);
 
