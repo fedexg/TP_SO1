@@ -699,7 +699,8 @@ void check_agent_expiration_time(void)
 
             if (diff >= WAIT_TIME_UNTIL_DELETE &&
                 !streq(ip_buffer, node->connection_info.ip)) {
-                log_message("[C]: Un nodo no se anunció en 15 segundos. Eliminándolo de la tabla");
+                log_message("[C]: %s:%d no se anunció en 15 segundos. Eliminándolo de la tabla",
+                            node->connection_info.ip, node->connection_info.port);
                 release_affected_jobs(node, state.node_map,
                                       state.job_map, &state.node_resources);
                 hashmap_delete(state.node_map, node);
@@ -759,8 +760,7 @@ void handle_udp_packet(int udp_fd)
         node->connection_info.ip = strdup(inet_ntoa(addr.sin_addr));
         node->connection_info.port = atoi(fields[1]);
         node->socket_fd = -1;
-    } else
-        return;
+    }
 
     // fields tiene la pinta
     // [ANNOUNCE <port> cpu:<x> mem:<y> gpu:<z>]

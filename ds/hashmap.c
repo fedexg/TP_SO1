@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include "../log/log.h"
+
 int find_index(Hashmap hm, void *data);
 void hashmap_resize(Hashmap hm);
 void *nocopy(void *data);
@@ -47,6 +49,9 @@ void hashmap_put(Hashmap hm, void *data)
     int idx = find_index(hm, data);
 
     if (idx != -1) {
+        void *new_data = hm->copy(data);
+        hm->free(hm->items[idx].data);
+        hm->items[idx].data = new_data;
         pthread_mutex_unlock(&hm->mutex);
         return;
     }
