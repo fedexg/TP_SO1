@@ -92,7 +92,7 @@ int main(int argc, char **argv)
     } else if (argc < 3) {
         agent_port = atoi(argv[1]);
         erlang_port = DEFAULT_ERLANG_PORT;
-    } else if (argc < 4){
+    } else if (argc < 4) {
         agent_port = atoi(argv[1]);
         erlang_port = atoi(argv[2]);
     } else {
@@ -105,11 +105,12 @@ int main(int argc, char **argv)
         custom_cpu = atoi(custom_local_node[0]);
         custom_gpu = atoi(custom_local_node[1]);
         custom_mem = atoi(custom_local_node[2]);
-        printf("%d:%d:%d\n",custom_cpu,custom_gpu,custom_mem);
+        printf("%d:%d:%d\n", custom_cpu, custom_gpu, custom_mem);
         state.node_resources.current_cpu = (custom_cpu >= 0 ? custom_cpu : 0);
         state.node_resources.current_gpu = (custom_gpu >= 0 ? custom_gpu : 0);
         state.node_resources.current_mem = (custom_mem >= 0 ? custom_mem : 0);
     }
+
     state.agent_port = agent_port;
 
     // Nos insertamos en la tabla de nodos
@@ -388,8 +389,18 @@ int init_udp_socket(void)
         return FAIL;
     }
 
-    // Seteamos para que sea un socket de broadcast
-    if (setsockopt(udp_broadcast_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT | SO_BROADCAST, &yes, sizeof(yes)) < 0) {
+    // Configuramos el socket
+    if (setsockopt(udp_broadcast_sock, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes)) < 0) {
+        error("No se pudo configurar el socket de UDP para permitir broadcast");
+        return FAIL;
+    }
+
+    if (setsockopt(udp_broadcast_sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
+        error("No se pudo configurar el socket de UDP para permitir broadcast");
+        return FAIL;
+    }
+
+    if (setsockopt(udp_broadcast_sock, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes)) < 0) {
         error("No se pudo configurar el socket de UDP para permitir broadcast");
         return FAIL;
     }
@@ -487,7 +498,7 @@ void send_udp_announce(void)
     memset(&sa_broadcast, 0, sizeof(sa_broadcast));
     sa_broadcast.sin_family = AF_INET;
     sa_broadcast.sin_port = htons(UDP_PORT);
-    sa_broadcast.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sa_broadcast.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 
     char buffer[BUFFER_MAX_SIZE] = { 0 };
     sprintf(buffer, "ANNOUNCE %d cpu:%d mem:%d gpu:%d\n",
@@ -731,16 +742,25 @@ void handle_udp_packet(int udp_fd)
     search_node.connection_info.ip = strdup(inet_ntoa(addr.sin_addr));
     search_node.connection_info.port = atoi(fields[1]);
 
+    // Obviamos encontrarnos a nosotros mismos
+    if (search_node.connection_info.port == state.agent_port)
+        return;
+
     NodeMapCell *node = hashmap_search(state.node_map, &search_node);
 
     // Si no existe en nuestra tabla de nodos,
-    // lo creamos para luego sumarlo
+    // lo creamos para luego sumarlo.
+    // En caso contrario, no hacemos nada
     if (node == NULL) {
+        log_message("[C]: Se encontró el nodo %s:%d",
+                search_node.connection_info.ip,
+                search_node.connection_info.port);
         node = malloc(sizeof(NodeMapCell));
         node->connection_info.ip = strdup(inet_ntoa(addr.sin_addr));
         node->connection_info.port = atoi(fields[1]);
         node->socket_fd = -1;
-    }
+    } else
+        return;
 
     // fields tiene la pinta
     // [ANNOUNCE <port> cpu:<x> mem:<y> gpu:<z>]
@@ -753,8 +773,6 @@ void handle_udp_packet(int udp_fd)
         atoi(fields[4] + 4),
     };
 
-    log_message("[C]: Se encontró el nodo %s:%d",
-            node->connection_info.ip, node->connection_info.port);
     node->resources = resources;
     node->time_when_called = time(NULL);
     hashmap_put(state.node_map, node);
