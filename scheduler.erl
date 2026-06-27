@@ -276,7 +276,6 @@ ammout_to_ask(Amount, Resourse_List, Index) ->
 % %
 
 string_of_ip_request(IP_LIST, DATA_TO_ASK, DATA_TYPE) ->
-    io:fwrite("~p~n", [IP_LIST]),
     case DATA_TO_ASK of
         [{Index_IP, AMMOUT} | XS] -> "@"++lists:nth(Index_IP, IP_LIST)++":"++DATA_TYPE++":"++integer_to_list(AMMOUT)++" "++string_of_ip_request(IP_LIST, XS, DATA_TYPE);
         [] -> ""
