@@ -792,7 +792,17 @@ void handle_udp_packet(int udp_fd)
         }
 
         node->socket_fd = sock;
-        if (add_descriptor(epoll_fd, sock, NULL) < 0) {
+
+        // Lo sumamos a la instancia de epoll
+        ConnContext *ctx = malloc(sizeof(ConnContext));
+        ctx->fd = sock;
+        ctx->type = CONN_TYPE_CLIENT_REMOTE;
+
+        struct epoll_event ev;
+        ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+        ev.data.ptr = ctx;
+
+        if (add_descriptor(epoll_fd, ctx->fd, &ev) < 0) {
             error("Error intentando añadir el nodo a la instancia de epoll");
             node->socket_fd = -1;
             close(sock);

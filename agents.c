@@ -149,56 +149,60 @@ void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
     // y los sacamos de la tabla de trabajos
     for (int i = 0; i < job_map->cap; ++i) {
         bool exists_job = job_map->items[i].data != NULL && !job_map->items[i].deleted;
-        if (exists_job) {
-            JobMapCell *job = (JobMapCell *)job_map->items[i].data;
-            bool affected_job = false;
+        if (!exists_job)
+            continue;
 
-            // Chequeamos que el job dependa de node
-            for (int j = 0; j < job->num_remotely_allocated; ++j) {
-                RemoteAllocation *remote = &job->remote_allocations[j];
-                if (streq(remote->connection_info.ip,
-                          node->connection_info.ip) &&
-                        ((remote->resources.current_cpu > 0) ||
-                        (remote->resources.current_mem > 0)  ||
-                        (remote->resources.current_gpu > 0))) {
-                    affected_job = true;
-                    break;
-                }
-            }
+        JobMapCell *job = (JobMapCell *)job_map->items[i].data;
+        bool affected_job = false;
 
-            // Devolvemos los recursos a nodos con trabajos afectados
-            if (affected_job) {
-                for (int j = 0; j < job->num_remotely_allocated; ++j) {
-                    RemoteAllocation *remote = &job->remote_allocations[j];
-
-                    // Si no está muerto, restauramos los recursos
-                    if (!streq(remote->connection_info.ip,
-                               node->connection_info.ip)) {
-                        NodeMapCell *alive_node = hashmap_search(node_map, &remote->connection_info);
-                        if (alive_node != NULL) {
-                            alive_node->resources.current_cpu += remote->resources.current_cpu;
-                            alive_node->resources.current_mem += remote->resources.current_mem;
-                            alive_node->resources.current_gpu += remote->resources.current_gpu;
-                        }
-                    }
-
-                    memset(&remote->resources, 0, sizeof(LocalResources));
-                }
-
-                if (job->granted_resources.current_cpu > 0)
-                    give_resources(node_resources, RES_KIND_CPU, job->granted_resources.current_cpu);
-                if (job->granted_resources.current_mem > 0)
-                    give_resources(node_resources, RES_KIND_MEM, job->granted_resources.current_mem);
-                if (job->granted_resources.current_gpu > 0)
-                    give_resources(node_resources, RES_KIND_GPU, job->granted_resources.current_gpu);
-
-                // Borramos el job afectado
-                long long delete_id = job->job_id;
-                free(job->remote_allocations);
-                hashmap_delete(job_map, &delete_id);
+        // Chequeamos que el job dependa de node
+        for (int j = 0; j < job->num_remotely_allocated; ++j) {
+            RemoteAllocation *remote = &job->remote_allocations[j];
+            if (streq(remote->connection_info.ip,
+                      node->connection_info.ip) &&
+                    ((remote->resources.current_cpu > 0) ||
+                    (remote->resources.current_mem > 0)  ||
+                    (remote->resources.current_gpu > 0))) {
+                affected_job = true;
+                break;
             }
         }
+
+        // Devolvemos los recursos a nodos con trabajos afectados
+        if (affected_job) {
+            for (int j = 0; j < job->num_remotely_allocated; ++j) {
+                RemoteAllocation *remote = &job->remote_allocations[j];
+
+                // Si no está muerto, restauramos los recursos
+                if (!streq(remote->connection_info.ip,
+                           node->connection_info.ip)) {
+                    NodeMapCell *alive_node = hashmap_search(node_map, &remote->connection_info);
+                    if (alive_node != NULL) {
+                        alive_node->resources.current_cpu += remote->resources.current_cpu;
+                        alive_node->resources.current_mem += remote->resources.current_mem;
+                        alive_node->resources.current_gpu += remote->resources.current_gpu;
+                    }
+                }
+
+                memset(&remote->resources, 0, sizeof(LocalResources));
+            }
+
+            if (job->granted_resources.current_cpu > 0)
+                give_resources(node_resources, RES_KIND_CPU, job->granted_resources.current_cpu);
+            if (job->granted_resources.current_mem > 0)
+                give_resources(node_resources, RES_KIND_MEM, job->granted_resources.current_mem);
+            if (job->granted_resources.current_gpu > 0)
+                give_resources(node_resources, RES_KIND_GPU, job->granted_resources.current_gpu);
+
+            // Borramos el job afectado
+            JobMapCell search_job;
+            search_job.job_id = job->job_id;
+            log_message("[C]: Eliminando job con id %lld de la tabla de jobs", job->job_id);
+            hashmap_delete(job_map, &search_job);
+        }
     }
+
+    log_message("[C]: Se liberaron exitosamente los jobs dependientes");
 }
 
 // Maneja desconexiones inesperadas
@@ -230,7 +234,7 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
     // Liberamos los recursos de los jobs que dependan de este nodo
     release_affected_jobs(dead_node, node_map, job_map, node_resources);
 
-    // Lo eliminamos de nuestra tabla de nodos
+    log_message("[C]: Eliminando el nodo de la tabla de nodos");
     hashmap_delete(node_map, &dead_node->connection_info);
-    free(dead_node);
+    log_message("[C]: Se eliminó exitosamente el nodo");
 }
