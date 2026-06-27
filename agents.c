@@ -58,7 +58,10 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 
         // Chequeamos que podemos reservar recursos
         if (exists_resource(&state->node_resources, req.res_kind, req.amount)) {
-            JobMapCell *cell = hashmap_search(state->job_map, &req.job_id);
+            JobMapCell search_job;
+            search_job.job_id = req.job_id;
+
+            JobMapCell *cell = hashmap_search(state->job_map, &search_job);
 
             // No encontramos un trabajo con este id, así que lo creamos
             if (cell == NULL)
@@ -71,11 +74,11 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             // Se pudo reservar recursos, así que enviamos GRANTED
             log_message("[C]: Enviando GRANTED al agente con descriptor %d", c_agent_fd);
             sprintf(response_to_agent, "GRANTED %lld\n", req.job_id);
-            send(c_agent_fd, response_to_agent, 8, 0);
+            send(c_agent_fd, response_to_agent, strlen(response_to_agent), 0);
         } else { // En caso contrario, enviamos DENIED
             log_message("[C]: Enviando DENIED al agente con descriptor %d", c_agent_fd);
             sprintf(response_to_agent, "DENIED %lld\n", req.job_id);
-            send(c_agent_fd, response_to_agent, 8, 0);
+            send(c_agent_fd, response_to_agent, strlen(response_to_agent), 0);
         }
 
         break;
@@ -85,13 +88,16 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 
         // Retomamos los recursos que dimos al agente que pidió recursos
         increase_resources(&state->node_resources, req.res_kind, req.amount);
-        JobMapCell *cell = hashmap_search(state->job_map, &req.job_id);
+        JobMapCell search_job;
+        search_job.job_id = req.job_id;
+ 
+        JobMapCell *cell = hashmap_search(state->job_map, &search_job);
 
         // No encontramos un trabajo con ese id, así que enviamos DENIED
         if (cell == NULL) {
             log_message("[C]: Enviando DENIED al agente con descriptor %d", c_agent_fd);
             sprintf(response_to_agent, "DENIED %lld\n", req.job_id);
-            send(c_agent_fd, response_to_agent, 8, 0);
+            send(c_agent_fd, response_to_agent, strlen(response_to_agent), 0);
             return;
         }
 
