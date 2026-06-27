@@ -11,6 +11,7 @@
 #include "resources.h"
 #include "types.h"
 #include "erl.h"
+#include <fcntl.h>
 
 #include "log/log.h"
 
@@ -25,8 +26,13 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
     char buffer[BUFFER_MAX_SIZE];
     memset(buffer, 0, BUFFER_MAX_SIZE);
 
+    // Hacemos temporalmente al socket del agente bloqueante
+    int flags = fcntl(c_agent_fd, F_GETFL, 0);
+    fcntl(c_agent_fd, F_SETFL, flags & ~O_NONBLOCK);
     // Leemos el mensaje que nos envía el agente de C
     ssize_t bytes_read = read_full_line(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
+    // Restauramos la propiedad no bloqueante del socket
+    fcntl(c_agent_fd, F_SETFL, flags | O_NONBLOCK);
     if (bytes_read < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
@@ -47,10 +53,16 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
         Request request;
         int result = parse_request(&request, request_fields, length);
 
-        log_message("2");
-        process_request(c_agent_fd, epoll_fd, request, state);
-        log_message("3");
-        free(request_fields);
+        if (result == FAIL){
+            log_message("Error en el parseo de la request");
+            return;
+        }
+        else{
+            log_message("2");
+            process_request(c_agent_fd, epoll_fd, request, state);
+            log_message("3");
+            free(request_fields);
+        }
     }
 }
 
