@@ -150,31 +150,31 @@ long long *int_copy(long long *x)
 
 // Crea una estructura de tipo Request a partir de un arreglo
 // de strings representando la petición de un agente C
-Request parse_request(char **request_fields, int n_fields)
+int parse_request(Request *req, char **request_fields, int n_fields)
 {
-    Request req;
     char *req_kind = request_fields[0];
 
     // Determinamos qué tipo de petición se hizo
     if (streq(req_kind, "RESERVE"))
-        req.kind = REQUEST_KIND_RESERVE;
+        req->kind = REQUEST_KIND_RESERVE;
     else if (streq(req_kind, "RELEASE"))
-        req.kind = REQUEST_KIND_RELEASE;
+        req->kind = REQUEST_KIND_RELEASE;
+    else
+        return FAIL;
 
     // Determinamos qué tipo de recurso se pide
-    req.job_id = atoll(request_fields[1]);
+    req->job_id = atoll(request_fields[1]);
     char *resource_name = request_fields[2];
     if (streq(resource_name, "cpu"))
-        req.res_kind = RES_KIND_CPU;
+        req->res_kind = RES_KIND_CPU;
     else if (streq(resource_name, "mem"))
-        req.res_kind = RES_KIND_MEM;
+        req->res_kind = RES_KIND_MEM;
     else if (streq(resource_name, "gpu"))
-        req.res_kind = RES_KIND_GPU;
+        req->res_kind = RES_KIND_GPU;
 
     // Determinamos cuánto se pidió del tipo de recurso
-    req.amount = atoi(request_fields[3]);
-
-    return req;
+    req->amount = atoi(request_fields[3]);
+    return OK;
 }
 
 // Parsea una petición del tipo JOB_REQUEST <job_id> [@ip:res:amount ... ]

@@ -115,7 +115,7 @@ JobQueueData *job_copy(JobQueueData *j);
 void job_free(JobQueueData *j);
 int job_cmp(JobQueueData *j1, JobQueueData *j2);
 long long *int_copy(long long *x);
-Request parse_request(char **request_fields, int n_fields);
+int parse_request(Request *req, char **request_fields, int n_fields);
 void request_free(Request *req);
 int parse_erlang_request(ErlangRequest *erl,
                          Hashmap node_map,

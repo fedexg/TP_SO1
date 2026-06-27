@@ -669,7 +669,6 @@ void *epoll_handler(void *arg)
                 default:
                     break;
                 }
-
             }
 
             if (event_flags & (EPOLLHUP | EPOLLERR)) {

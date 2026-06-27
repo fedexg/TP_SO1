@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
+#include <fcntl.h>
 
 #include "erl.h"
 #include "types.h"
@@ -209,7 +210,7 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
             }
             pthread_mutex_unlock(&state->res_protection);
         } else {
-            log_message("[C]: Enviando RESERVE al agente C pedido");
+            log_message("[C]: Enviando RESERVE al agente C pedido (%s:%d)", ip, port);
 
             // Avisamos a otro agente C que queremos reservar un recurso
             sprintf(msg, "RESERVE %lld %s %d\n", job_id, resource, alloc.amount);
@@ -219,7 +220,17 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
 
             // Contamos la cantidad de GRANTEDs que recibimos de parte del agente C
             char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
+
+            // Hacemos al socket (temporalmente) no bloqueante para que se reciba
+            // el mensaje adecuadamente
+            int flags = fcntl(agent_fd, F_GETFL, 0);
+            fcntl(agent_fd, F_SETFL, flags & ~O_NONBLOCK);
+
             bytes_read = read_full_line(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1);
+
+            // Restauramos la propiedad de no bloqueante
+            fcntl(agent_fd, F_SETFL, flags | O_NONBLOCK);
+
             if (bytes_read < 0) {
                 // Error de lectura
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {

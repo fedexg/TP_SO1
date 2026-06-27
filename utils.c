@@ -118,7 +118,7 @@ ssize_t read_full_line(int fd, char *buffer, int max_size)
         if (bytes < 0) {
             // Entonces no hay datos o no se llegó a '\n'
             if (errno == EAGAIN || errno == EWOULDBLOCK)
-                return 0;
+                continue;
 
             return -1;
         }

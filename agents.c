@@ -27,7 +27,7 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
 
     // Leemos el mensaje que nos envía el agente de C
     ssize_t bytes_read = read_full_line(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
-    if (bytes_read <= 0) {
+    if (bytes_read < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
 
@@ -38,12 +38,18 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
         close(c_agent_fd);
     } else {
         // Procesamos la petición que nos hizo
-        log_message("[C]: Procesando petición enviada por un agente C");
+        log_message("[C]: Procesando petición enviada por un agente C: %s", buffer);
 
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
-        Request request = parse_request(request_fields, length);
+
+        log_message("1");
+        Request request;
+        int result = parse_request(&request, request_fields, length);
+
+        log_message("2");
         process_request(c_agent_fd, epoll_fd, request, state);
+        log_message("3");
         free(request_fields);
     }
 }
