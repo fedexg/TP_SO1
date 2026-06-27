@@ -183,7 +183,9 @@ error_from_agent(Job_Id, Manager_Map) ->
 
 write_inbox(Data) ->
     File_Name = "scheduler_log.txt",
-    Data_To_Write = "# Agent C responce to Erlang Scheduler:\n\t"++Data++"\n",
+    {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:local_time(),
+    DateTimeStr = io_lib:format("~4..0w-~2..0w-~2..0w ~2..0w:~2..0w:~2..0w", [Year, Month, Day, Hour, Minute, Second]),
+    Data_To_Write = "# "++DateTimeStr++" : Agent C response to Erlang Scheduler:\n\t"++Data++"\n",
     case file:write_file(File_Name, Data_To_Write, [append]) of
         ok -> 
             io:format("[Erlang]: Written Inbox in the Log.~n");
