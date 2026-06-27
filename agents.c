@@ -58,12 +58,10 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 
         // Chequeamos que podemos reservar recursos
         if (exists_resource(&state->node_resources, req.res_kind, req.amount)) {
-            log_message("1");
             JobMapCell search_job;
             search_job.job_id = req.job_id;
 
             JobMapCell *cell = hashmap_search(state->job_map, &search_job);
-            log_message("2");
             // No encontramos un trabajo con este id, así que lo creamos
             if (cell == NULL) {
                 cell = calloc(1, sizeof(JobMapCell));
@@ -72,17 +70,9 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
                 cell->granted_resources.mem = state->node_resources.mem;
                 cell->granted_resources.gpu = state->node_resources.gpu;
             }
-            log_message("3");
-            log_message("%d",req.amount);
-            log_message("%d",cell->granted_resources.current_cpu);
             increase_resources(&cell->granted_resources, req.res_kind, req.amount);
-            log_message("%d",cell->granted_resources.current_cpu);
-            log_message("4");
-            log_message("%d %d %d",cell->granted_resources.current_cpu,cell->granted_resources.current_mem,cell->granted_resources.current_gpu);
-            hashmap_put(state->job_map, &cell);
-            log_message("5");
+            hashmap_put(state->job_map, cell);
             give_resources(&state->node_resources, req.res_kind, req.amount);
-            log_message("6");
             // Se pudo reservar recursos, así que enviamos GRANTED
             log_message("[C]: Enviando GRANTED al agente con descriptor %d", c_agent_fd);
             sprintf(response_to_agent, "GRANTED %lld\n", req.job_id);
@@ -125,7 +115,7 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             free(cell);
         } else {
             log_message("[C]: Actualizando job en la tabla de nodos");
-            hashmap_put(state->job_map, &cell);
+            hashmap_put(state->job_map, cell);
         }
 
         pthread_mutex_lock(&state->protection.mutex);
@@ -232,10 +222,9 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
     if (dead_node == NULL)
         return;
 
-    log_message("[C]: Manejando conexión inesperada del nodo %s:%s",
+    log_message("[C]: Manejando conexión inesperada del nodo %s:%d",
                 dead_node->connection_info.ip,
                 dead_node->connection_info.port);
-
 
     // Liberamos los recursos de los jobs que dependan de este nodo
     release_affected_jobs(dead_node, node_map, job_map, node_resources);

@@ -170,6 +170,7 @@ int main(int argc, char **argv)
         return cleanup(CLEAN_SOCKETS | CLEAN_EPOLL);
 
     pthread_join(checker_thread, NULL);
+    pthread_join(announce_thread, NULL);
     pthread_join(epoll_thread, NULL);
 
     log_message("[C]: Cerrando instancia de epoll");
