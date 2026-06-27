@@ -70,10 +70,15 @@ void hashmap_put(Hashmap hm, void *data)
         return;
     }
 
+    log_message("p1");
     int index = (i > 0)? (i - 1) : 0;
+    log_message("p2 %d", index);
     hm->items[index].data = hm->copy(data);
+    log_message("p3 %d", index);
     hm->items[index].deleted = 0;
+    log_message("p4 %d", index);
     ++hm->num_items;
+    log_message("p5");
 
     float balance_factor = (float)hm->num_items/hm->cap;
     if (balance_factor >= 0.75f)
