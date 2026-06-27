@@ -113,8 +113,7 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
         if (cell->granted_resources.current_cpu == 0 && cell->granted_resources.current_gpu == 0 &&
             cell->granted_resources.current_mem == 0) {
             log_message("[C]: El job no tiene más recursos que pedir; eliminando job de la tabla de nodos");
-            hashmap_delete(state->job_map, &req.job_id);
-            free(cell);
+            hashmap_delete(state->job_map, &search_job);
         } else {
             log_message("[C]: Actualizando job en la tabla de nodos");
             hashmap_put(state->job_map, cell);
