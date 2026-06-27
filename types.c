@@ -68,14 +68,9 @@ JobMapCell *job_cell_copy(JobMapCell *jmc)
     JobMapCell* cloned = malloc(sizeof(JobMapCell));
     cloned->job_id = job_id;
     cloned->num_remotely_allocated = num_remotely_allocated;
-    log_message("Veamos si se rompe en el calloc");
     cloned->remote_allocations = calloc(num_remotely_allocated, sizeof(RemoteAllocation));
-    log_message("No se rompio en el calloc");
-    log_message("Veamos si se rompe en memcpy");
-
     if (remote_allocations)
         memcpy(cloned->remote_allocations, remote_allocations, sizeof(RemoteAllocation)*num_remotely_allocated);
-    log_message("No se rompido en ningu ladido");
     cloned->granted_resources = granted_resources;
     return cloned;
 }
