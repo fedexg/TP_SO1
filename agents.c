@@ -65,11 +65,13 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             // No encontramos un trabajo con este id, así que lo creamos
             if (cell == NULL) {
                 cell = calloc(1, sizeof(JobMapCell));
+                cell->job_id = req.job_id;
                 cell->remote_allocations = NULL;
                 cell->granted_resources.cpu = state->node_resources.cpu;
                 cell->granted_resources.mem = state->node_resources.mem;
                 cell->granted_resources.gpu = state->node_resources.gpu;
             }
+
             increase_resources(&cell->granted_resources, req.res_kind, req.amount);
             hashmap_put(state->job_map, cell);
             give_resources(&state->node_resources, req.res_kind, req.amount);
