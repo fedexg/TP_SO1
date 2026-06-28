@@ -21,10 +21,12 @@ typedef struct _LocalResources {
     int gpu;
 } LocalResources;
 
-typedef struct ConnContext {
+typedef struct Client {
     int fd;
     ConnType type;
-} ConnContext;
+    char recv_buffer[BUFFER_MAX_SIZE];
+    int recv_len;
+} Client;
 
 // Informacion con respecto a la conexion en la red
 typedef struct ConnectionInfo {

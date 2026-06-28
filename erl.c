@@ -24,13 +24,11 @@ void send_release_to_agent(Hashmap node_map, ConnectionInfo conn_info, long long
                             const char *resource, int amount, int epoll_fd);
 
 // Manejar requests (si es posible) proveniente de un cliente Erlang
-void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *state)
+void handle_erlang_client(int erlang_fd, char *buffer, ssize_t bytes_read,
+                          time_t time, int epoll_fd, AgentState *state)
 {
     log_message("[C]: Procesando cliente Erlang con descriptor %d", erlang_fd);
-    char buffer[BUFFER_MAX_SIZE] = { 0 };
 
-    // Leemos el mensaje que nos envía el cliente Erlang
-    ssize_t bytes_read = read_full_line(erlang_fd, buffer, BUFFER_MAX_SIZE - 1);
     if (bytes_read < 0) {
         // Error de lectura
         if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -169,16 +167,16 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
         char *ip = alloc->erlang_connection_info.ip;
         int port = alloc->erlang_connection_info.port;
 
+        // Buscamos el nodo con la IP y puerto que tenemos
+        // para poder mandarle mensajes
+        NodeMapCell search_node;
+        search_node.connection_info.ip = ip;
+        search_node.connection_info.port = port;
+        NodeMapCell *node = hashmap_search(state->node_map, &search_node);
+
         // Determinamos a quién hay que enviarle un mensaje
         int agent_fd = alloc->agent_fd;
         if (agent_fd == -1) {
-            // Buscamos el nodo con la IP y puerto que tenemos
-            // para poder mandarle mensajes
-            NodeMapCell search_node;
-            search_node.connection_info.ip = ip;
-            search_node.connection_info.port = port;
-            NodeMapCell *node = hashmap_search(state->node_map, &search_node);
-
             if (node == NULL) {
                 log_message("[C]: Error buscando el nodo %s:%d", ip, port);
                 continue;
@@ -219,18 +217,10 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
             if (bytes_read < 0)
                 error("Error enviando mensaje");
 
-            // Contamos la cantidad de GRANTEDs que recibimos de parte del agente C
             char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
-
-            // Hacemos al socket (temporalmente) no bloqueante para que se reciba
-            // el mensaje adecuadamente
-            int flags = fcntl(agent_fd, F_GETFL, 0);
-            fcntl(agent_fd, F_SETFL, flags & ~O_NONBLOCK);
-
-            bytes_read = read_full_line(agent_fd, recv_buffer, BUFFER_MAX_SIZE - 1);
-
-            // Restauramos la propiedad de no bloqueante
-            fcntl(agent_fd, F_SETFL, flags | O_NONBLOCK);
+            char buffer[BUFFER_MAX_SIZE] = { 0 };
+            int len = 0;
+            bytes_read = read_full_line(agent_fd, recv_buffer, buffer, &len);
 
             if (bytes_read < 0) {
                 // Error de lectura
@@ -239,7 +229,6 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
                     continue;
                 }
             }
-
 
             // Con saber que recibimos GRANTED podemos guardar los recursos;
             // no necesitamos el job_id en este caso

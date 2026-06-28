@@ -5,7 +5,8 @@
 #include "ds/queue.h"
 #include "ds/list.h"
 
-void handle_erlang_client(int erlang_fd, time_t time, int epoll_fd, AgentState *state);
+void handle_erlang_client(int erlang_fd, char *buffer, ssize_t bytes_read,
+                          time_t time, int epoll_fd, AgentState *state);
 void handle_job_request(ErlangRequest erl, time_t time, int epoll_fd, AgentState *state);
 void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state);
 void handle_job_status(ErlangRequest erl, AgentState *state);

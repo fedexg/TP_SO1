@@ -102,34 +102,50 @@ int add_descriptor(int epoll_fd, int fd, struct epoll_event *ev, int op)
 }
 
 // Lee hasta \n en un stream de datos dado por fd
-ssize_t read_full_line(int fd, char *buffer, int max_size)
+ssize_t read_full_line(int fd, char *buffer,
+                       char *internal_buffer, int *internal_len)
 {
-    ssize_t total = 0;
-    while (total < max_size - 1) {
-        char c;
+    while (1) {
+        // Intentamos leer lo que llegue del socket
+        char temp[1024];
+        ssize_t bytes = recv(fd, temp, sizeof(temp), 0);
 
-        // Leemos byte por byte
-        ssize_t bytes = recv(fd, &c, 1, 0);
-
-        // Ocurre una desconexión?
-        if (bytes == 0)
-            return -1;
-
+        if (bytes == 0) return 0;  // Desconexión
         if (bytes < 0) {
-            // Entonces no hay datos o no se llegó a '\n'
+            // Sin más datos por ahora
             if (errno == EAGAIN || errno == EWOULDBLOCK)
-                continue;
+                break;
 
-            return -1;
+            return FAIL; // Error real
         }
 
-        buffer[total++] = c;
-        if (c == '\n')
-            break;
+        // Acumulamos en el buffer interno del descriptor
+        if (*internal_len + bytes >= BUFFER_MAX_SIZE)
+            return -2; // Error: Buffer overflow
+
+        memcpy(internal_buffer + *internal_len, temp, bytes);
+        *internal_len += bytes;
+        internal_buffer[*internal_len] = '\0';
     }
 
-    buffer[total] = '\0';
-    return total;
+    // Ya tenemos una línea completa?
+    char *newline = strchr(internal_buffer, '\n');
+    if (newline != NULL) {
+        size_t line_len = newline - internal_buffer + 1;
+
+        // Copiamos la línea completa al buffer de salida
+        memcpy(buffer, internal_buffer, line_len);
+        buffer[line_len] = '\0';
+
+        // Movemos el resto de los datos al principio del buffer interno
+        int remaining = *internal_len - line_len;
+        memmove(internal_buffer, internal_buffer + line_len, remaining);
+        *internal_len = remaining;
+
+        return line_len;
+    }
+
+    return FAIL; // Seguimos esperando el resto del mensaje
 }
 
 // Encuentra el puerto de un nodo con una ip dada

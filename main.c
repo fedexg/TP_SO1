@@ -521,41 +521,41 @@ void *send_udp_announce(void *arg)
 // Añade los descriptores necesarios a la instancia de epoll
 int add_descriptors(void)
 {
-    ConnContext *ctx_public = malloc(sizeof(ConnContext));
-    ctx_public->fd = listen_public_sock;
-    ctx_public->type = CONN_TYPE_PUBLIC;
+    Client *client_public = malloc(sizeof(Client));
+    client_public->fd = listen_public_sock;
+    client_public->type = CONN_TYPE_PUBLIC;
 
-    ConnContext *ctx_erlang = malloc(sizeof(ConnContext));
-    ctx_erlang->fd = listen_erlang_sock;
-    ctx_erlang->type = CONN_TYPE_ERL;
+    Client *client_erlang = malloc(sizeof(Client));
+    client_erlang->fd = listen_erlang_sock;
+    client_erlang->type = CONN_TYPE_ERL;
 
-    ConnContext *ctx_udp = malloc(sizeof(ConnContext));
-    ctx_udp->fd = udp_broadcast_sock;
-    ctx_udp->type = CONN_TYPE_UDP;
+    Client *client_udp = malloc(sizeof(Client));
+    client_udp->fd = udp_broadcast_sock;
+    client_udp->type = CONN_TYPE_UDP;
 
-    ConnContext *ctx_timer = malloc(sizeof(ConnContext));
-    ctx_timer->fd = timer_fd;
-    ctx_timer->type = CONN_TYPE_TIMER;
+    Client *client_timer = malloc(sizeof(Client));
+    client_timer->fd = timer_fd;
+    client_timer->type = CONN_TYPE_TIMER;
 
     struct epoll_event ev;
 
     ev.events = EPOLLIN | EPOLLET;
-    ev.data.ptr = ctx_public;
+    ev.data.ptr = client_public;
     if (add_descriptor(epoll_fd, listen_public_sock, &ev, EPOLL_CTL_ADD) < 0)
         return FAIL;
 
     ev.events = EPOLLIN | EPOLLET;
-    ev.data.ptr = ctx_erlang;
+    ev.data.ptr = client_erlang;
     if (add_descriptor(epoll_fd, listen_erlang_sock, &ev, EPOLL_CTL_ADD) < 0)
         return FAIL;
 
     ev.events = EPOLLIN | EPOLLET;
-    ev.data.ptr = ctx_udp;
+    ev.data.ptr = client_udp;
     if (add_descriptor(epoll_fd, udp_broadcast_sock, &ev, EPOLL_CTL_ADD) < 0)
         return FAIL;
 
     ev.events = EPOLLIN | EPOLLET;
-    ev.data.ptr = ctx_timer;
+    ev.data.ptr = client_timer;
     if (add_descriptor(epoll_fd, timer_fd, &ev, EPOLL_CTL_ADD) < 0)
         return FAIL;
 
@@ -573,11 +573,11 @@ void *epoll_handler(void *arg)
         }
 
         for (int i = 0; i < num_fds_ready; ++i) {
-            ConnContext *ctx = (ConnContext *)events[i].data.ptr;
+            Client *c = (Client *)events[i].data.ptr;
             int event_flags = events[i].events;
 
             if (event_flags & EPOLLIN) {
-                switch (ctx->type) {
+                switch (c->type) {
                 case CONN_TYPE_PUBLIC: {
                     struct sockaddr_in addr;
                     socklen_t addrlen = sizeof(addr);
@@ -595,14 +595,14 @@ void *epoll_handler(void *arg)
                     set_socket_nonblocking(connect_public_sock);
 
                     // Lo sumamos a la instancia de epoll
-                    ConnContext *ctx = malloc(sizeof(ConnContext));
-                    ctx->fd = connect_public_sock;
-                    ctx->type = CONN_TYPE_CLIENT_REMOTE;
+                    Client *c = malloc(sizeof(Client));
+                    c->fd = connect_public_sock;
+                    c->type = CONN_TYPE_CLIENT_REMOTE;
 
                     struct epoll_event ev;
                     ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
-                    ev.data.ptr = ctx;
-                    if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_ADD) < 0)
+                    ev.data.ptr = c;
+                    if (add_descriptor(epoll_fd, c->fd, &ev, EPOLL_CTL_ADD) < 0)
                         exit(EXIT_FAILURE);
 
                     break;
@@ -625,14 +625,14 @@ void *epoll_handler(void *arg)
                     set_socket_nonblocking(connect_erlang_sock);
 
                     // Lo sumamos a la instancia de epoll
-                    ConnContext *ctx = malloc(sizeof(ConnContext));
-                    ctx->fd = connect_erlang_sock;
-                    ctx->type = CONN_TYPE_CLIENT_ERLANG;
+                    Client *c = malloc(sizeof(Client));
+                    c->fd = connect_erlang_sock;
+                    c->type = CONN_TYPE_CLIENT_ERLANG;
 
                     struct epoll_event ev;
                     ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
-                    ev.data.ptr = ctx;
-                    if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_ADD) < 0)
+                    ev.data.ptr = c;
+                    if (add_descriptor(epoll_fd, c->fd, &ev, EPOLL_CTL_ADD) < 0)
                         exit(EXIT_FAILURE);
 
                     break;
@@ -641,16 +641,31 @@ void *epoll_handler(void *arg)
                 case CONN_TYPE_UDP:
                     log_message("[C]: Manejando evento de socket de broadcast UDP");
                     // Si es el socket de broadcast, lo manejamos por separado
-                    handle_udp_packet(ctx->fd);
+                    handle_udp_packet(c->fd);
                     break;
 
                 case CONN_TYPE_CLIENT_REMOTE: {
-                    handle_c_agent(ctx->fd, epoll_fd, &state);
+                    char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
+                    ssize_t bytes_read = read_full_line(c->fd, recv_buffer, c->recv_buffer, &c->recv_len);
+                    handle_c_agent(c->fd, recv_buffer, bytes_read, epoll_fd, &state);
+
+                    if (bytes_read <= 0) {
+                        close(c->fd);
+                        free(c);
+                    }
+
                     break;
                 }
 
                 case CONN_TYPE_CLIENT_ERLANG: {
-                    handle_erlang_client(ctx->fd, time(NULL), epoll_fd, &state);
+                    char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
+                    ssize_t bytes_read = read_full_line(c->fd, recv_buffer, c->recv_buffer, &c->recv_len);
+                    handle_erlang_client(c->fd, recv_buffer, bytes_read, time(NULL), epoll_fd, &state);
+                    if (bytes_read <= 0) {
+                        close(c->fd);
+                        free(c);
+                    }
+
                     break;
                 }
 
@@ -665,17 +680,6 @@ void *epoll_handler(void *arg)
                 default:
                     break;
                 }
-            }
-
-            if (event_flags & (EPOLLHUP | EPOLLERR)) {
-                char response[BUFFER_MAX_SIZE] = { 0 };
-                ssize_t bytes = read(ctx->fd, response, sizeof(response) - 1);
-                if (bytes <= 0) {
-                    close(ctx->fd);
-                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->fd, NULL);
-                }
-
-                free(ctx);
             }
         }
     }
@@ -789,20 +793,23 @@ void handle_udp_packet(int udp_fd)
         node->socket_fd = sock;
 
         // Lo sumamos a la instancia de epoll
-        ConnContext *ctx = malloc(sizeof(ConnContext));
-        ctx->fd = sock;
-        ctx->type = CONN_TYPE_CLIENT_REMOTE;
+        Client *c = malloc(sizeof(Client));
+        c->fd = sock;
+        c->type = CONN_TYPE_CLIENT_REMOTE;
+        memset(c->recv_buffer, 0, BUFFER_MAX_SIZE);
+        c->recv_len = 0;
 
         struct epoll_event ev;
         ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
-        ev.data.ptr = ctx;
+        ev.data.ptr = c;
 
-        if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_ADD) < 0) {
+        if (add_descriptor(epoll_fd, c->fd, &ev, EPOLL_CTL_ADD) < 0) {
             error("Error intentando añadir el nodo a la instancia de epoll");
             node->socket_fd = -1;
             close(sock);
             free(node->connection_info.ip);
             free(node);
+            free(c);
             return;
         }
     }

@@ -17,22 +17,14 @@
 
 void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
                                      LocalResources *node_resources, int fd);
+NodeMapCell *find_node_by_fd(Hashmap node_map, int fd);
 
 // Manejar requests (si es posible) proveniente de agentes de C
 // Si ocurre una desconexión inesperada, se toma en cuenta
-void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
+void handle_c_agent(int c_agent_fd, char *buffer, ssize_t bytes_read,
+                    int epoll_fd, AgentState *state)
 {
     log_message("[C]: Procesando agente C como cliente");
-    char buffer[BUFFER_MAX_SIZE];
-    memset(buffer, 0, BUFFER_MAX_SIZE);
-
-    // Hacemos temporalmente al socket del agente bloqueante
-    int flags = fcntl(c_agent_fd, F_GETFL, 0);
-    fcntl(c_agent_fd, F_SETFL, flags & ~O_NONBLOCK);
-    // Leemos el mensaje que nos envía el agente de C
-    ssize_t bytes_read = read_full_line(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
-    // Restauramos la propiedad no bloqueante del socket
-    fcntl(c_agent_fd, F_SETFL, flags | O_NONBLOCK);
     if (bytes_read < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return;
@@ -45,21 +37,15 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
     } else {
         // Procesamos la petición que nos hizo
         log_message("[C]: Procesando petición enviada por un agente C: %s", buffer);
-
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
 
-        log_message("1");
         Request request;
-        int result = parse_request(&request, request_fields, length);
-
-        if (result < 0) {
+        if (length < 1 || parse_request(&request, request_fields, length) < 0) {
             log_message("Error en el parseo de la request");
             return;
         } else {
-            log_message("2");
             process_request(c_agent_fd, epoll_fd, request, state);
-            log_message("3");
             free(request_fields);
         }
     }
@@ -233,19 +219,7 @@ void release_affected_jobs(NodeMapCell *node, Hashmap node_map, Hashmap job_map,
 void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
                                      LocalResources *node_resources, int fd)
 {
-    NodeMapCell *dead_node = NULL;
-
-    // Encontramos el nodo muerto según fd
-    for (int i = 0; i < node_map->cap; ++i) {
-        bool exists_item = node_map->items[i].data != NULL && !node_map->items[i].deleted;
-        if (exists_item) {
-            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
-            if (node->socket_fd == fd) {
-                dead_node = node;
-                break;
-            }
-        }
-    }
+    NodeMapCell *dead_node = find_node_by_fd(node_map, fd);
 
     // No hay desconexión inesperada; proseguimos
     if (dead_node == NULL)
@@ -261,4 +235,18 @@ void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
     log_message("[C]: Eliminando el nodo de la tabla de nodos");
     hashmap_delete(node_map, &dead_node->connection_info);
     log_message("[C]: Se eliminó exitosamente el nodo");
+}
+
+NodeMapCell *find_node_by_fd(Hashmap node_map, int fd)
+{
+    for (int i = 0; i < node_map->cap; ++i) {
+        bool exists_item = node_map->items[i].data != NULL && !node_map->items[i].deleted;
+        if (exists_item) {
+            NodeMapCell *node = (NodeMapCell *)node_map->items[i].data;
+            if (node->socket_fd == fd)
+                return node;
+        }
+    }
+
+    return NULL;
 }
