@@ -790,6 +790,8 @@ void handle_udp_packet(int udp_fd)
             return;
         }
 
+        set_socket_nonblocking(sock);
+
         node->socket_fd = sock;
 
         // Lo sumamos a la instancia de epoll
