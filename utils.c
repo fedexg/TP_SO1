@@ -11,12 +11,13 @@
 #include "const.h"
 #include "utils.h"
 #include "types.h"
+#include "log/log.h"
 
 // Imprime msg junto a un error de mensaje
 // determinado por errno
 void error(const char *msg)
 {
-    printf("%s: %s\n", msg, strerror(errno));
+    log_message("%s: %s", msg, strerror(errno));
 }
 
 // Guarda tu IP en ip_buffer
@@ -113,8 +114,9 @@ ssize_t read_full_line(int fd, char *buffer,
         if (bytes == 0) return 0;  // Desconexión
         if (bytes < 0) {
             // Sin más datos por ahora
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 break;
+            }
 
             return FAIL; // Error real
         }

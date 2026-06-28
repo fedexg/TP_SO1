@@ -220,14 +220,13 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
             char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
             char buffer[BUFFER_MAX_SIZE] = { 0 };
             int len = 0;
+
             bytes_read = read_full_line(agent_fd, recv_buffer, buffer, &len);
+            log_message("[C]: Recibido: %s %d", recv_buffer, len);
 
             if (bytes_read < 0) {
-                // Error de lectura
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    log_message("[C]: No llegó el mensaje entero todavía");
-                    continue;
-                }
+                log_message("[C]: No llegó el mensaje entero todavía");
+                continue;
             }
 
             // Con saber que recibimos GRANTED podemos guardar los recursos;
