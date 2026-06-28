@@ -164,6 +164,12 @@ int parse_request(Request *req, char **request_fields, int n_fields)
 
     // Determinamos qué tipo de recurso se pide
     req->job_id = atoll(request_fields[1]);
+    if (!streq(req_kind, "RESERVE")) {
+        req->res_kind = -1;
+        req->amount = 0;
+        return OK;
+    }
+
     char *resource_name = request_fields[2];
     if (streq(resource_name, "cpu"))
         req->res_kind = RES_KIND_CPU;

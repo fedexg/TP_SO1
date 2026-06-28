@@ -646,25 +646,11 @@ void *epoll_handler(void *arg)
 
                 case CONN_TYPE_CLIENT_REMOTE: {
                     handle_c_agent(ctx->fd, epoll_fd, &state);
-
-                    struct epoll_event ev;
-                    ev.events = EPOLLIN | EPOLLONESHOT;
-                    ev.data.ptr = ctx;
-                    if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_MOD) < 0)
-                        exit(EXIT_FAILURE);
-
                     break;
                 }
 
                 case CONN_TYPE_CLIENT_ERLANG: {
                     handle_erlang_client(ctx->fd, time(NULL), epoll_fd, &state);
-
-                    struct epoll_event ev;
-                    ev.events = EPOLLIN | EPOLLONESHOT;
-                    ev.data.ptr = ctx;
-                    if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_MOD) < 0)
-                        exit(EXIT_FAILURE);
-
                     break;
                 }
 

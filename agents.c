@@ -30,7 +30,7 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
     int flags = fcntl(c_agent_fd, F_GETFL, 0);
     fcntl(c_agent_fd, F_SETFL, flags & ~O_NONBLOCK);
     // Leemos el mensaje que nos envía el agente de C
-    ssize_t bytes_read = read_full_line(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
+    ssize_t bytes_read = read(c_agent_fd, buffer, BUFFER_MAX_SIZE - 1);
     // Restauramos la propiedad no bloqueante del socket
     fcntl(c_agent_fd, F_SETFL, flags | O_NONBLOCK);
     if (bytes_read < 0) {
