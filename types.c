@@ -162,6 +162,8 @@ int parse_request(Request *req, char **request_fields, int n_fields)
     else
         return FAIL;
 
+    req->job_id = atoll(request_fields[1]);
+
     char *resource_name = request_fields[2];
     if (streq(resource_name, "cpu"))
         req->res_kind = RES_KIND_CPU;
