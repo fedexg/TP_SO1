@@ -230,12 +230,6 @@ void *checker_thread_handler(void *arg)
         pthread_mutex_lock(&state.protection.mutex);
         log_message("[C]: Checker tiene el mutex");
 
-        while (queue_empty(state.job_queue)) {
-            log_message("[C]: Checker: Cola vacía. Esperando");
-            pthread_cond_wait(&state.protection.nonempty_queue_cond,
-                              &state.protection.mutex);
-        }
-
         // Buscamos en cada job de la cola de jobs, y si pasaron más de
         // CHECKER_QUEUE_TIME_UNTIL_DELETE (15) segundos, se envía
         // un timeout al cliente de Erlang que lo pidió
@@ -547,22 +541,22 @@ int add_descriptors(void)
 
     ev.events = EPOLLIN | EPOLLET;
     ev.data.ptr = ctx_public;
-    if (add_descriptor(epoll_fd, listen_public_sock, &ev) < 0)
+    if (add_descriptor(epoll_fd, listen_public_sock, &ev, EPOLL_CTL_ADD) < 0)
         return FAIL;
 
     ev.events = EPOLLIN | EPOLLET;
     ev.data.ptr = ctx_erlang;
-    if (add_descriptor(epoll_fd, listen_erlang_sock, &ev) < 0)
+    if (add_descriptor(epoll_fd, listen_erlang_sock, &ev, EPOLL_CTL_ADD) < 0)
         return FAIL;
 
     ev.events = EPOLLIN | EPOLLET;
     ev.data.ptr = ctx_udp;
-    if (add_descriptor(epoll_fd, udp_broadcast_sock, &ev) < 0)
+    if (add_descriptor(epoll_fd, udp_broadcast_sock, &ev, EPOLL_CTL_ADD) < 0)
         return FAIL;
 
     ev.events = EPOLLIN | EPOLLET;
     ev.data.ptr = ctx_timer;
-    if (add_descriptor(epoll_fd, timer_fd, &ev) < 0)
+    if (add_descriptor(epoll_fd, timer_fd, &ev, EPOLL_CTL_ADD) < 0)
         return FAIL;
 
     return OK;
@@ -608,7 +602,7 @@ void *epoll_handler(void *arg)
                     struct epoll_event ev;
                     ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
                     ev.data.ptr = ctx;
-                    if (add_descriptor(epoll_fd, ctx->fd, &ev) < 0)
+                    if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_ADD) < 0)
                         exit(EXIT_FAILURE);
 
                     break;
@@ -638,7 +632,7 @@ void *epoll_handler(void *arg)
                     struct epoll_event ev;
                     ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
                     ev.data.ptr = ctx;
-                    if (add_descriptor(epoll_fd, ctx->fd, &ev) < 0)
+                    if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_ADD) < 0)
                         exit(EXIT_FAILURE);
 
                     break;
@@ -650,13 +644,29 @@ void *epoll_handler(void *arg)
                     handle_udp_packet(ctx->fd);
                     break;
 
-                case CONN_TYPE_CLIENT_REMOTE:
+                case CONN_TYPE_CLIENT_REMOTE: {
                     handle_c_agent(ctx->fd, epoll_fd, &state);
-                    break;
 
-                case CONN_TYPE_CLIENT_ERLANG:
-                    handle_erlang_client(ctx->fd, time(NULL), epoll_fd, &state);
+                    struct epoll_event ev;
+                    ev.events = EPOLLIN | EPOLLONESHOT;
+                    ev.data.ptr = ctx;
+                    if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_MOD) < 0)
+                        exit(EXIT_FAILURE);
+
                     break;
+                }
+
+                case CONN_TYPE_CLIENT_ERLANG: {
+                    handle_erlang_client(ctx->fd, time(NULL), epoll_fd, &state);
+
+                    struct epoll_event ev;
+                    ev.events = EPOLLIN | EPOLLONESHOT;
+                    ev.data.ptr = ctx;
+                    if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_MOD) < 0)
+                        exit(EXIT_FAILURE);
+
+                    break;
+                }
 
                 case CONN_TYPE_TIMER: {
                     // Chequeamos si el tiempo de un agente expiró
@@ -801,7 +811,7 @@ void handle_udp_packet(int udp_fd)
         ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
         ev.data.ptr = ctx;
 
-        if (add_descriptor(epoll_fd, ctx->fd, &ev) < 0) {
+        if (add_descriptor(epoll_fd, ctx->fd, &ev, EPOLL_CTL_ADD) < 0) {
             error("Error intentando añadir el nodo a la instancia de epoll");
             node->socket_fd = -1;
             close(sock);

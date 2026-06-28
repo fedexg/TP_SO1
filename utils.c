@@ -85,7 +85,7 @@ char **split(char *text, char *delimiter, int *len)
 }
 
 // Añade fd a la instancia de epoll
-int add_descriptor(int epoll_fd, int fd, struct epoll_event *ev)
+int add_descriptor(int epoll_fd, int fd, struct epoll_event *ev, int op)
 {
     struct epoll_event evv;
     evv.events = EPOLLIN | EPOLLET;
@@ -93,7 +93,7 @@ int add_descriptor(int epoll_fd, int fd, struct epoll_event *ev)
     if (ev == NULL)
         ev = &evv;
 
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, ev) < 0) {
+    if (epoll_ctl(epoll_fd, op, fd, ev) < 0) {
         error("Error intentando añadir el socket a la instancia de epoll");
         return FAIL;
     }

@@ -53,11 +53,10 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
         Request request;
         int result = parse_request(&request, request_fields, length);
 
-        if (result == FAIL){
+        if (result < 0) {
             log_message("Error en el parseo de la request");
             return;
-        }
-        else{
+        } else {
             log_message("2");
             process_request(c_agent_fd, epoll_fd, request, state);
             log_message("3");
@@ -73,6 +72,10 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
     switch (req.kind) {
     case REQUEST_KIND_RESERVE:
         log_message("[C]: Procesando petición de tipo RESERVE sobre job id %lld", req.job_id);
+        log_message("[C]: Reserve: Recursos que tenemos disponibles: %d CPU, %d MEM %d GPU",
+                state->node_resources.current_cpu,
+                state->node_resources.current_mem,
+                state->node_resources.current_gpu);
 
         // Chequeamos que podemos reservar recursos
         if (exists_resource(&state->node_resources, req.res_kind, req.amount)) {
