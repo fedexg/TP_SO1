@@ -165,12 +165,12 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
     LocalResources local = { 0 };
 
     for (int i = 0; i < erl.num_allocations; ++i) {
-        NodeAllocationInfo alloc = erl.node_allocations[i];
-        char *ip = alloc.erlang_connection_info.ip;
-        int port = alloc.erlang_connection_info.port;
+        NodeAllocationInfo *alloc = &erl.node_allocations[i];
+        char *ip = alloc->erlang_connection_info.ip;
+        int port = alloc->erlang_connection_info.port;
 
         // Determinamos a quién hay que enviarle un mensaje
-        int agent_fd = alloc.agent_fd;
+        int agent_fd = alloc->agent_fd;
         if (agent_fd == -1) {
             // Buscamos el nodo con la IP y puerto que tenemos
             // para poder mandarle mensajes
@@ -185,17 +185,18 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
             }
 
             agent_fd = node->socket_fd;
+            alloc->agent_fd = agent_fd;
         }
 
         // Preparamos el tipo de recurso a pedir
         char msg[BUFFER_MAX_SIZE] = { 0 };
         char resource[4] = { 0 };
 
-        if (alloc.res_kind == RES_KIND_CPU)
+        if (alloc->res_kind == RES_KIND_CPU)
             strcpy(resource, "cpu");
-        if (alloc.res_kind == RES_KIND_MEM)
+        if (alloc->res_kind == RES_KIND_MEM)
             strcpy(resource, "mem");
-        if (alloc.res_kind == RES_KIND_GPU)
+        if (alloc->res_kind == RES_KIND_GPU)
             strcpy(resource, "gpu");
 
         // Evitamos enviarnos un mensaje a nosotros mismos; simplemente
@@ -203,9 +204,9 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
         if (streq(ip, my_ip) && port == state->agent_port) {
             log_message("[C]: Tomando recursos de nosotros mismos: %s:%d", ip, port);
             pthread_mutex_lock(&state->res_protection);
-            if (exists_resource(&state->node_resources, alloc.res_kind, alloc.amount)) {
-                give_resources(&state->node_resources, alloc.res_kind, alloc.amount);
-                increase_resources(&local, alloc.res_kind, alloc.amount);
+            if (exists_resource(&state->node_resources, alloc->res_kind, alloc->amount)) {
+                give_resources(&state->node_resources, alloc->res_kind, alloc->amount);
+                increase_resources(&local, alloc->res_kind, alloc->amount);
                 ++num_granted;
             }
             pthread_mutex_unlock(&state->res_protection);
@@ -213,7 +214,7 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
             log_message("[C]: Enviando RESERVE al agente C pedido (%s:%d)", ip, port);
 
             // Avisamos a otro agente C que queremos reservar un recurso
-            sprintf(msg, "RESERVE %lld %s %d\n", job_id, resource, alloc.amount);
+            sprintf(msg, "RESERVE %lld %s %d\n", job_id, resource, alloc->amount);
             ssize_t bytes_read = send(agent_fd, msg, strlen(msg), 0);
             if (bytes_read < 0)
                 error("Error enviando mensaje");
@@ -245,12 +246,12 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
             if (strncmp(recv_buffer, "GRANTED", 7) == 0) {
                 remote_allocs[num_granted].connection_info.ip = strdup(ip);
                 remote_allocs[num_granted].connection_info.port = port;
-                if (alloc.res_kind == RES_KIND_CPU)
-                    remote_allocs[num_granted].resources.current_cpu += alloc.amount;
-                if (alloc.res_kind == RES_KIND_MEM)
-                    remote_allocs[num_granted].resources.current_mem += alloc.amount;
-                if (alloc.res_kind == RES_KIND_GPU)
-                    remote_allocs[num_granted].resources.current_gpu += alloc.amount;
+                if (alloc->res_kind == RES_KIND_CPU)
+                    remote_allocs[num_granted].resources.current_cpu += alloc->amount;
+                if (alloc->res_kind == RES_KIND_MEM)
+                    remote_allocs[num_granted].resources.current_mem += alloc->amount;
+                if (alloc->res_kind == RES_KIND_GPU)
+                    remote_allocs[num_granted].resources.current_gpu += alloc->amount;
 
                 ++num_granted;
                 agent_fds = list_append(agent_fds, &agent_fd, (ListCpyFunc)int_copy);
