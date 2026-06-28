@@ -293,7 +293,7 @@ string_of_ip_request(IP_LIST, DATA_TO_ASK, DATA_TYPE) ->
 %         (espera 10 segundos) y responde al Sch. que terminó de trabajar.
 % %
 client_simulator(Scheduler) ->
-    Job_Info = {rand:uniform(10), trunc(math:pow(2, rand:uniform(10))),rand:uniform(10)},
+    Job_Info = {rand:uniform(5), trunc(math:pow(2, rand:uniform(5))),rand:uniform(5)},
     Scheduler ! {new_job, self(), Job_Info},
     receive
         {given_jobid, Job_Id} -> do_job(Job_Id, Scheduler),
