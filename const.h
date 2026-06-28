@@ -21,7 +21,7 @@
 #define BUFFER_MAX_SIZE 1024
 
 #define CHECKER_QUEUE_USE_TIME          5
-#define QUEUE_SLEEP_TIME                3
+#define QUEUE_SLEEP_TIME                2
 #define CHECKER_QUEUE_TIME_UNTIL_DELETE 15.0
 #define WAIT_TIME_UNTIL_DELETE          15.0
 

@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -38,8 +39,10 @@ void handle_c_agent(int c_agent_fd, int epoll_fd, AgentState *state)
             return;
 
         error("Error intentando leer de un agente de C");
+        pthread_mutex_lock(&state->protection.mutex);
         handle_unexpected_disconnection(state->node_map, state->job_map,
                                         &state->node_resources, c_agent_fd);
+        pthread_mutex_unlock(&state->protection.mutex);
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c_agent_fd, NULL);
         close(c_agent_fd);
     } else {
@@ -137,8 +140,8 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             hashmap_put(state->job_map, cell);
         }
 
-        pthread_mutex_lock(&state->protection.mutex);
         // Atendemos solicitudes encoladas en orden
+        pthread_mutex_lock(&state->protection.mutex);
         while (!queue_empty(state->job_queue)) {
             // Debemos proteger la cola para evitar conflictos con
             // worker_thread_handler en main
@@ -146,7 +149,6 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             state->job_queue = dequeue(state->job_queue, (QueueFreeFunc)job_free);
             handle_job_request(job->request, job->time_when_alloc, epoll_fd, state);
         }
-
         pthread_mutex_unlock(&state->protection.mutex);
 
         break;
