@@ -277,10 +277,19 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
             for (int i = 0; i < erl.num_allocations; ++i) {
                 NodeAllocationInfo alloc = erl.node_allocations[i];
                 if (*(int *)p->data == alloc.agent_fd) {
-                    log_message("[C]: Enviando RELEASE al agente de C al que se le pidió recursos");
+                    log_message("[C]: Enviando RELEASE al agente de C al que se le pidió recursos (%s:%d)",
+                            alloc.erlang_connection_info.ip, alloc.erlang_connection_info.port);
+
+                    char resource[4] = { 0 };
+                    if (alloc.res_kind == RES_KIND_CPU)
+                        strcpy(resource, "cpu");
+                    if (alloc.res_kind == RES_KIND_MEM)
+                        strcpy(resource, "mem");
+                    if (alloc.res_kind == RES_KIND_GPU)
+                        strcpy(resource, "gpu");
 
                     char buffer[BUFFER_MAX_SIZE]  = { 0 };
-                    sprintf(buffer, "RELEASE %lld\n", job_id);
+                    sprintf(buffer, "RELEASE %lld %s %d\n", job_id, resource, alloc.amount);
                     send(alloc.agent_fd, buffer, strlen(buffer), 0);
                 }
             }
