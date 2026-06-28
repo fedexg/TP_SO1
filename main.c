@@ -205,11 +205,14 @@ void *worker_thread_handler(void *arg)
             pthread_cond_wait(&state.protection.nonempty_queue_cond,
                               &state.protection.mutex);
         }
+
         JobQueueData job = *(JobQueueData *)queue_head(state.job_queue);
-        handle_job_request(job.request, job.time_when_alloc, epoll_fd, &state);
-        state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
         pthread_mutex_unlock(&state.protection.mutex);
+        handle_job_request(job.request, job.time_when_alloc, epoll_fd, &state);
+        pthread_mutex_lock(&state.protection.mutex);
+        state.job_queue = dequeue(state.job_queue, (QueueFreeFunc)job_free);
         log_message("[C]: Worker suelta el mutex");
+        pthread_mutex_unlock(&state.protection.mutex);
     }
 
     return NULL;
@@ -224,8 +227,9 @@ void *checker_thread_handler(void *arg)
     while (true) {
         // Si el agente debe usar job_queue, darle tiempo para que lo haga
         sleep(CHECKER_QUEUE_USE_TIME);
-        log_message("[C]: Checker tiene el mutex");
         pthread_mutex_lock(&state.protection.mutex);
+        log_message("[C]: Checker tiene el mutex");
+
         while (queue_empty(state.job_queue)) {
             log_message("[C]: Checker: Cola vacía. Esperando");
             pthread_cond_wait(&state.protection.nonempty_queue_cond,
@@ -251,6 +255,7 @@ void *checker_thread_handler(void *arg)
 
             p = next;
         }
+
         pthread_mutex_unlock(&state.protection.mutex);
         log_message("[C]: Checker suelta el mutex");
     }
