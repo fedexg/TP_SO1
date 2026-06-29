@@ -189,6 +189,12 @@ int parse_request(Request *req, char **request_fields, int n_fields)
 
     req->job_id = atoll(request_fields[1]);
 
+    if (req->kind == REQUEST_KIND_GRANTED || req->kind == REQUEST_KIND_DENIED) {
+        req->res_kind = -1;
+        req->amount = 0;
+        return OK;
+    }
+
     char *resource_name = request_fields[2];
     if (streq(resource_name, "cpu"))
         req->res_kind = RES_KIND_CPU;

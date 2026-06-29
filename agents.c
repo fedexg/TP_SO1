@@ -47,6 +47,9 @@ void handle_c_agent(int c_agent_fd, char *buffer, ssize_t bytes_read,
         Request request;
         if (length < 1 || parse_request(&request, request_fields, length) < 0) {
             log_message("Error en el parseo de la request");
+            char buffer[BUFFER_MAX_SIZE] = { 0 };
+            sprintf(buffer, "JOB_DENIED %lld", request.job_id);
+            send(c_agent_fd, buffer, strlen(buffer), 0);
             return;
         } else {
             process_request(c_agent_fd, epoll_fd, request, state);
@@ -144,22 +147,34 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 
         break;
     case REQUEST_KIND_GRANTED: {
-        PendingJob* pending_job = find_in_pending_job_list(state->pending_jobs,req.job_id); // TODO: implementar esta funcion (te devuelve el void* data de state->pending_jobs)
-        pending_job->resources_granted++;
-        if (pending_job->resources_granted == pending_job->total_resources_needed){
-            JobMapCell* new_job = calloc(1,sizeof(JobMapCell));
+        log_message("[C]: Procesando petición de tipo GRANTED sobre job id %lld", req.job_id);
+        PendingJob *pending_job = find_in_pending_job_list(state->pending_jobs, req.job_id);
+        if (pending_job == NULL) {
+            log_message("[C]: No se encontró el job de id %lld", req.job_id);
+            return;
+        }
+
+        ++pending_job->resources_granted;
+        if (pending_job->resources_granted == pending_job->total_resources_needed) {
+            JobMapCell *new_job = calloc(1, sizeof(JobMapCell));
             new_job->granted_resources = pending_job->my_resources_granted;
             new_job->job_id = pending_job->job_id;
             new_job->num_remotely_allocated = pending_job->num_remote_allocated;
+
             char granted_msg[BUFFER_MAX_SIZE] = { 0 };
             sprintf(granted_msg, "JOB_GRANTED %lld\n", req.job_id);
             send(pending_job->erlang_socket, granted_msg, strlen(granted_msg), 0);
         }
+
         break;
     }
+
     case REQUEST_KIND_DENIED: {
+        log_message("[C]: Procesando petición de tipo DENIED sobre job id %lld", req.job_id);
+
         // Si recibimos un denied, ya el trabajo no se va a poder hacer, no importa cuantos granteds recibamos
-        PendingJob* pending_job = find_in_pending_job_list(state->pending_jobs,req.job_id); 
+        PendingJob* pending_job = find_in_pending_job_list(state->pending_jobs, req.job_id);
+
         // Liberamos nuestros propios recursos
         pthread_mutex_lock(&state->res_protection);
         if (pending_job->my_resources_granted.current_cpu > 0)
@@ -169,6 +184,7 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
         if (pending_job->my_resources_granted.current_gpu > 0)
             increase_resources(&state->node_resources, RES_KIND_GPU, pending_job->my_resources_granted.current_gpu);
         pthread_mutex_unlock(&state->res_protection);
+
         // Liberamos los recursos remotos (mandamos RELEASE a todos, total si le mandamos RELEASE a un nodo que no dio recursos no deberia pasar nada)
         for (int i = 0; i < pending_job->num_remote_allocated;i++){
             char release_msg[BUFFER_MAX_SIZE] = { 0 };
@@ -183,12 +199,14 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
                 send(pending_job->erlang_socket, release_msg, strlen(release_msg), 0);
             }
         }
+
         // Metemos el Job a la queue para que se pueda hacer en otro momento
         pthread_mutex_lock(&state->protection.mutex);
-        JobQueueData* job_to_enqueue = calloc(1,sizeof(JobQueueData));
+        JobQueueData *job_to_enqueue = calloc(1, sizeof(JobQueueData));
         job_to_enqueue->request.erlang_fd = pending_job->erlang_socket;
         job_to_enqueue->request.job_id = req.job_id;
         job_to_enqueue->request.num_allocations = pending_job->num_remote_allocated;
+
         job_to_enqueue->request.node_allocations = calloc(pending_job->num_remote_allocated, sizeof(NodeAllocationInfo));
         for (int i = 0; i < pending_job->num_remote_allocated; i++) {
             NodeAllocationInfo *alloc = &job_to_enqueue->request.node_allocations[i];
@@ -210,6 +228,7 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
                 alloc->amount = gpu;
             }       
         }
+
         job_to_enqueue->time_when_alloc = time(NULL);
         pthread_mutex_unlock(&state->protection.mutex);
 
