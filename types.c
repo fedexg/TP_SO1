@@ -196,6 +196,18 @@ int parse_erlang_request(ErlangRequest *erl,
         int length = 0;
         char **node_information = split(request_fields[i], ":", &length);
 
+        if (!streq(node_information[1],"cpu") || !streq(node_information[1],"mem") || !streq(node_information[1],"gpu")){
+            log_message("[C]: Campos invalidos de tipo de recurso");
+            free(nodes);
+            free(node_information);
+            return FAIL;
+        }
+        if (atoi(node_information[2]) < 0){
+            log_message("[C]: Campo invalido de cantidad de recurso");
+            free(nodes);
+            free(node_information);
+            return FAIL;
+        }
         // El nodo está mal definido
         if (length < 3) {
             free(node_information);

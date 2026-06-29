@@ -36,17 +36,50 @@ void handle_c_agent(int c_agent_fd, char *buffer, ssize_t bytes_read,
         close(c_agent_fd);
     } else {
         // Procesamos la petición que nos hizo
-        log_message("[C]: Procesando petición enviada por un agente C: %s", buffer);
+        log_message("[C]: Parseando petición enviada por un agente C: %s", buffer);
         int length = 0;
         char **request_fields = split(buffer, " ", &length);
-
-        Request request;
-        if (length < 1 || parse_request(&request, request_fields, length) < 0) {
-            log_message("Error en el parseo de la request");
+        // CHEQUEO DE SANIDAD
+        //
+        if (length <= 0){
+            log_message("[C]: Error en el parseo de la peticion 1");
             return;
-        } else {
-            process_request(c_agent_fd, epoll_fd, request, state);
-            free(request_fields);
+        }
+        if (!streq(request_fields[0],"DENIED") && !streq(request_fields[0],"GRANTED") && !streq(request_fields[0],"RESERVE") 
+                                               && !streq(request_fields[0],"RELEASE")){
+            log_message("[C]: Error en el parseo de la peticion 2");                                    
+            return;
+            }
+        if (!streq(request_fields[0],"DENIED") && !streq(request_fields[0],"GRANTED")){
+            Request request;
+            if (length < 4 || parse_request(&request, request_fields, length) < 0) {
+                log_message("[C]: Error en el parseo de la peticion 3");
+                return;
+            }
+            else if (streq(request_fields[0],"RESERVE")){
+                if (atoi(request_fields[1]) < 0){
+                    log_message("[C]: Error en el parseo de la peticion 4");
+                    return;
+                }
+                if (!streq(request_fields[2],"cpu") && !streq(request_fields[2],"mem") && !streq(request_fields[2],"gpu")){
+                    log_message("[C]: Error en el parseo de la peticion 5");
+                    return;
+                }
+                log_message("[C]: La peticion paso el parseo, vamos a procesarla");
+                process_request(c_agent_fd, epoll_fd, request, state);
+            }
+            else if (streq(request_fields[0],"RELEASE")){
+                if (atoi(request_fields[1]) < 0){
+                    log_message("[C]: Error en el parseo de la peticion 6");
+                    return;
+                }
+                if (!streq(request_fields[2],"cpu") && !streq(request_fields[2],"mem") && !streq(request_fields[2],"gpu")){
+                    log_message("[C]: Error en el parseo de la peticion 7");
+                    return;
+                }
+                log_message("[C]: La peticion paso el parseo, vamos a procesarla");
+                process_request(c_agent_fd, epoll_fd, request, state);
+            }
         }
     }
 }
@@ -81,7 +114,9 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 
             increase_resources(&cell->granted_resources, req.res_kind, req.amount);
             hashmap_put(state->job_map, cell);
+            pthread_mutex_lock(&state->res_protection);
             give_resources(&state->node_resources, req.res_kind, req.amount);
+            pthread_mutex_unlock(&state->res_protection);
             // Se pudo reservar recursos, así que enviamos GRANTED
             log_message("[C]: Enviando GRANTED al agente con descriptor %d", c_agent_fd);
             sprintf(response_to_agent, "GRANTED %lld\n", req.job_id);
@@ -98,7 +133,6 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
         log_message("[C]: Procesando petición de tipo RELEASE sobre job id %lld", req.job_id);
 
         // Retomamos los recursos que dimos al agente que pidió recursos
-        increase_resources(&state->node_resources, req.res_kind, req.amount);
         JobMapCell search_job;
         search_job.job_id = req.job_id;
  
@@ -112,6 +146,7 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             return;
         }
 
+        increase_resources(&state->node_resources, req.res_kind, req.amount);
         // El trabajo existe, entonces devolvemos los recursos a ese agente
         // y eliminamos el trabajo en caso de no tener más recursos que usar;
         // De lo contrario, lo ponemos en nuestra tabla de trabajos para seguir
@@ -125,7 +160,8 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
             log_message("[C]: Actualizando job en la tabla de nodos");
             hashmap_put(state->job_map, cell);
         }
-
+        sprintf(response_to_agent, "GRANTED %lld\n", req.job_id);
+        send(c_agent_fd, response_to_agent, strlen(response_to_agent), 0);
         // Atendemos solicitudes encoladas en orden
         while (!queue_empty(state->job_queue)) {
             // Debemos proteger la cola para evitar conflictos con
