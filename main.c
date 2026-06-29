@@ -1,6 +1,3 @@
-// TODO: pensar como hacer que no mande mensajes repetidos
-//     - tiene que ver con send -> recv inmediato
-
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
