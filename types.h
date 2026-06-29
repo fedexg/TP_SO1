@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <stdbool.h>
+#include <sys/types.h>
 
 #include "const.h"
 #include "ds/hashmap.h"
@@ -38,6 +39,7 @@ typedef struct ConnectionInfo {
 typedef struct _RemoteAllocation {
     ConnectionInfo connection_info;
     LocalResources resources;
+    int remote_agent_fd;
 } RemoteAllocation;
 
 // Elemento de la tabla de nodos
@@ -79,7 +81,6 @@ typedef struct _ErlangRequest {
     long long job_id;
     NodeAllocationInfo *node_allocations;
     int num_allocations;
-    bool sent_message;
 } ErlangRequest;
 
 // Elemento de la cola de jobs en espera
@@ -94,12 +95,26 @@ typedef struct MutexCond {
     pthread_cond_t nonempty_queue_cond;
 } MutexCond;
 
+// Estructura que representa un job de erlang antes de estar granteado/denegado
+typedef struct PendingJob {
+    long long job_id;
+    int erlang_socket;
+    int total_resources_needed;
+    int resources_granted;
+    int status; // 0 -> Pendiente, 1 -> Listo
+    int num_remote_allocated;
+    LocalResources my_resources_granted;        // Recursos alocados al job pendiente del nodo local
+    RemoteAllocation *remote_allocations;       // Recursos alocados al job pendiente de nodos remotos
+} PendingJob;
+
+
 // Guarda el estado global del agente
 typedef struct AgentState {
     int agent_port;
     LocalResources node_resources;
     Hashmap node_map, job_map;
     Queue job_queue;
+    List pending_jobs;
     List timed_out_jobs;
     MutexCond protection; // Usamos esto para manipular job_queue atomicamente
     pthread_mutex_t res_protection;
@@ -116,6 +131,8 @@ unsigned int job_cell_hash(JobMapCell *jmc);
 JobQueueData *job_copy(JobQueueData *j);
 void job_free(JobQueueData *j);
 int job_cmp(JobQueueData *j1, JobQueueData *j2);
+PendingJob *pending_job_copy(PendingJob *p);
+void pending_job_free(PendingJob *p);
 long long *int_copy(long long *x);
 int parse_request(Request *req, char **request_fields, int n_fields);
 void request_free(Request *req);

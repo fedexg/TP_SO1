@@ -31,7 +31,9 @@
 
 typedef enum {
     REQUEST_KIND_RESERVE = 0,
-    REQUEST_KIND_RELEASE
+    REQUEST_KIND_RELEASE,
+    REQUEST_KIND_GRANTED,
+    REQUEST_KIND_DENIED
 } RequestKind;
 
 typedef enum {

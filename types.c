@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include "const.h"
 #include "utils.h"
 #include "types.h"
 #include "log/log.h"
@@ -113,7 +114,6 @@ JobQueueData *job_copy(JobQueueData *j)
     int num_allocations = j->request.num_allocations;
     NodeAllocationInfo *node_allocations = j->request.node_allocations;
     time_t time_when_alloc = j->time_when_alloc;
-    bool sent_message = j->request.sent_message;
 
     JobQueueData *cloned = malloc(sizeof(JobQueueData));
     cloned->request.erlang_fd = erlang_fd;
@@ -122,7 +122,6 @@ JobQueueData *job_copy(JobQueueData *j)
     cloned->request.node_allocations = calloc(num_allocations, sizeof(NodeAllocationInfo));
     memcpy(cloned->request.node_allocations, node_allocations, sizeof(NodeAllocationInfo)*num_allocations);
     cloned->time_when_alloc = time_when_alloc;
-    cloned->request.sent_message = sent_message;
 
     return cloned;
 }
@@ -138,6 +137,28 @@ void job_free(JobQueueData *j)
 int job_cmp(JobQueueData *j1, JobQueueData *j2)
 {
     return j1->request.job_id - j2->request.job_id;
+}
+
+PendingJob *pending_job_copy(PendingJob *p)
+{
+    PendingJob *cloned = calloc(1, sizeof(PendingJob));
+    cloned->job_id = p->job_id;
+    cloned->erlang_socket = p->erlang_socket;
+    cloned->total_resources_needed = p->total_resources_needed;
+    cloned->resources_granted = p->resources_granted;
+    cloned->status = p->status;
+    cloned->num_remote_allocated = p->num_remote_allocated;
+    cloned->my_resources_granted = p->my_resources_granted;
+    cloned->remote_allocations = calloc(p->num_remote_allocated, sizeof(RemoteAllocation));
+    memcpy(cloned->remote_allocations, p->remote_allocations, sizeof(RemoteAllocation)*p->num_remote_allocated);
+
+    return cloned;
+}
+
+void pending_job_free(PendingJob *p)
+{
+    free(p->remote_allocations);
+    free(p);
 }
 
 // Copia un entero
@@ -159,6 +180,10 @@ int parse_request(Request *req, char **request_fields, int n_fields)
         req->kind = REQUEST_KIND_RESERVE;
     else if (streq(req_kind, "RELEASE"))
         req->kind = REQUEST_KIND_RELEASE;
+    else if(streq(req_kind,"GRANTED"))
+        req->kind = REQUEST_KIND_GRANTED;
+    else if(streq(req_kind,"DENIED"))
+        req->kind = REQUEST_KIND_DENIED;
     else
         return FAIL;
 
@@ -231,6 +256,5 @@ int parse_erlang_request(ErlangRequest *erl,
     erl->num_allocations = nodes_len;
     erl->node_allocations = calloc(erl->num_allocations, sizeof(NodeAllocationInfo));
     memcpy(erl->node_allocations, nodes, sizeof(NodeAllocationInfo)*erl->num_allocations);
-    erl->sent_message = false;
     return OK;
 }

@@ -83,6 +83,7 @@ int main(int argc, char **argv)
                                 (FreeFunc)job_cell_free,
                                 (HashFunc)job_cell_hash);
     state.job_queue = queue_make();
+    state.pending_jobs = list_make();
     state.timed_out_jobs = list_make();
 
     // Si un programa se desconecta inesperadamente, decidimos

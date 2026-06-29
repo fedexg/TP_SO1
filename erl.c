@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <unistd.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -9,6 +10,8 @@
 #include <fcntl.h>
 
 #include "erl.h"
+#include "const.h"
+#include "ds/hashmap.h"
 #include "types.h"
 #include "utils.h"
 #include "resources.h"
@@ -19,7 +22,7 @@
 
 bool find_in_queue(Queue queue, long long id);
 bool find_in_list(List list, long long id);
-List delete_from_timed_out_jobs(List timed_out_jobs, long long id);
+List delete_from_list_by_id(List list, long long id, ListFreeFunc fr);
 void send_release_to_agent(Hashmap node_map, ConnectionInfo conn_info, long long job_id,
                             const char *resource, int amount, int epoll_fd);
 
@@ -148,191 +151,112 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
         return;
     }
 
-    // Pedimos a los agentes lo que necesitamos
-    RemoteAllocation *remote_allocs = calloc(erl.num_allocations, sizeof(RemoteAllocation));
-    int num_granted = 0;
-
-    // Como pueden repetirse IPs en una petición de este tipo,
-    // usamos una lista, pues no se asegura que hayan erl.num_allocations agentes
-    List agent_fds = list_make();
-
     // Necesitamos la IP para no mandarnos
     // mensajes a nosotros mismos
     char my_ip[64];
     get_local_ip(my_ip, 64);
     LocalResources local = { 0 };
 
+    // Creamos el nuevo PendingJob
+    PendingJob *new_pending_job = calloc(1, sizeof(PendingJob));
+    new_pending_job->job_id = erl.job_id;
+    new_pending_job->erlang_socket = erl.erlang_fd;
+    new_pending_job->total_resources_needed = erl.num_allocations;
+    new_pending_job->resources_granted = 0;
+    new_pending_job->status = 0;
+    new_pending_job->num_remote_allocated = 0;
+    new_pending_job->remote_allocations = calloc(erl.num_allocations, sizeof(RemoteAllocation));
+    new_pending_job->my_resources_granted = local;
+    pthread_mutex_lock(&state->protection.mutex);
+    state->pending_jobs = list_append(state->pending_jobs, new_pending_job, (ListCpyFunc)pending_job_copy);
+    pthread_mutex_unlock(&state->protection.mutex);
+    
+    // Mandamos los reserve que tengamos que mandar
     for (int i = 0; i < erl.num_allocations; ++i) {
         NodeAllocationInfo *alloc = &erl.node_allocations[i];
         char *ip = alloc->erlang_connection_info.ip;
         int port = alloc->erlang_connection_info.port;
 
-        // Buscamos el nodo con la IP y puerto que tenemos
-        // para poder mandarle mensajes
         NodeMapCell search_node;
         search_node.connection_info.ip = ip;
         search_node.connection_info.port = port;
         NodeMapCell *node = hashmap_search(state->node_map, &search_node);
 
-        // Determinamos a quién hay que enviarle un mensaje
         int agent_fd = alloc->agent_fd;
         if (agent_fd == -1) {
             if (node == NULL) {
                 log_message("[C]: Error buscando el nodo %s:%d", ip, port);
                 continue;
             }
-
             agent_fd = node->socket_fd;
             alloc->agent_fd = agent_fd;
         }
 
-        // Preparamos el tipo de recurso a pedir
-        char msg[BUFFER_MAX_SIZE] = { 0 };
         char resource[4] = { 0 };
+        if (alloc->res_kind == RES_KIND_CPU) strcpy(resource, "cpu");
+        if (alloc->res_kind == RES_KIND_MEM) strcpy(resource, "mem");
+        if (alloc->res_kind == RES_KIND_GPU) strcpy(resource, "gpu");
 
-        if (alloc->res_kind == RES_KIND_CPU)
-            strcpy(resource, "cpu");
-        if (alloc->res_kind == RES_KIND_MEM)
-            strcpy(resource, "mem");
-        if (alloc->res_kind == RES_KIND_GPU)
-            strcpy(resource, "gpu");
-
-        // Evitamos enviarnos un mensaje a nosotros mismos; simplemente
-        // tomamos nuestros propios recursos, y lo consideramos GRANTED
+        // Caso 1: El recurso pedido esta en nuestro propio nodo
         if (streq(ip, my_ip) && port == state->agent_port) {
             log_message("[C]: Tomando recursos de nosotros mismos: %s:%d", ip, port);
             pthread_mutex_lock(&state->res_protection);
             if (exists_resource(&state->node_resources, alloc->res_kind, alloc->amount)) {
                 give_resources(&state->node_resources, alloc->res_kind, alloc->amount);
                 increase_resources(&local, alloc->res_kind, alloc->amount);
-                ++num_granted;
+                increase_resources(&new_pending_job->my_resources_granted,alloc->res_kind,alloc->amount);
+                // Como es local, lo contabilizamos como concedido inmediatamente
+                new_pending_job->resources_granted++;
             }
             pthread_mutex_unlock(&state->res_protection);
-        } else {
-            log_message("[C]: Enviando RESERVE al agente C pedido (%s:%d)", ip, port);
+        } 
+        // Caso 2: El recurso es de otro nodo
+        else {
+            int idx = new_pending_job->num_remote_allocated;
 
-            // Avisamos a otro agente C que queremos reservar un recurso
-            sprintf(msg, "RESERVE %lld %s %d\n", job_id, resource, alloc->amount);
-            ssize_t bytes_read = send(agent_fd, msg, strlen(msg), 0);
-            if (bytes_read < 0)
-                error("Error enviando mensaje");
-
-            char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
-            char buffer[BUFFER_MAX_SIZE] = { 0 };
-            int len = 0;
-
-            bytes_read = read_full_line(agent_fd, recv_buffer, buffer, &len);
-            log_message("[C]: Recibido: %s %d", recv_buffer, len);
-
-            if (bytes_read < 0) {
-                log_message("[C]: No llegó el mensaje entero todavía");
-                continue;
+            new_pending_job->remote_allocations[idx].connection_info.ip = strdup(ip);
+            new_pending_job->remote_allocations[idx].connection_info.port = port;
+            new_pending_job->remote_allocations[idx].remote_agent_fd = alloc->agent_fd;
+            switch (alloc->res_kind) {
+            case RES_KIND_CPU:
+                new_pending_job->remote_allocations[idx].resources.current_cpu += alloc->amount;
+                break;
+            case RES_KIND_MEM:
+                new_pending_job->remote_allocations[idx].resources.current_mem += alloc->amount;
+                break;
+            case RES_KIND_GPU:
+                new_pending_job->remote_allocations[idx].resources.current_gpu += alloc->amount;
+                break;
+            default:
+                break;
             }
+            new_pending_job->num_remote_allocated++;
 
-            // Con saber que recibimos GRANTED podemos guardar los recursos;
-            // no necesitamos el job_id en este caso
-            if (strncmp(recv_buffer, "GRANTED", 7) == 0) {
-                remote_allocs[num_granted].connection_info.ip = strdup(ip);
-                remote_allocs[num_granted].connection_info.port = port;
-                if (alloc->res_kind == RES_KIND_CPU)
-                    remote_allocs[num_granted].resources.current_cpu += alloc->amount;
-                if (alloc->res_kind == RES_KIND_MEM)
-                    remote_allocs[num_granted].resources.current_mem += alloc->amount;
-                if (alloc->res_kind == RES_KIND_GPU)
-                    remote_allocs[num_granted].resources.current_gpu += alloc->amount;
-
-                ++num_granted;
-                agent_fds = list_append(agent_fds, &agent_fd, (ListCpyFunc)int_copy);
-            }
+            // Mandamos el RESERVE
+            log_message("[C]: Enviando RESERVE al agente remoto (%s:%d)", ip, port);
+            char reserve_msg[BUFFER_MAX_SIZE] = { 0 };
+            sprintf(reserve_msg, "RESERVE %lld %s %d\n", job_id, resource, alloc->amount);
+            send(agent_fd, reserve_msg, strlen(reserve_msg), 0);
         }
     }
 
-    // Recibimos menos GRANTEDs de los que necesitamos,
-    // entonces negamos el trabajo y liberamos los recursos
-    // de jobs que se aceptaron
-    if (num_granted < erl.num_allocations) {
-        log_message("[C]: Enviando JOB_DENIED al cliente Erlang");
-
-        if (!erl.sent_message) {
-            memset(msg, 0, BUFFER_MAX_SIZE - 1);
-            sprintf(msg, "JOB_DENIED %lld\n", job_id);
-            send(erl.erlang_fd, msg, strlen(msg), 0);
-            erl.sent_message = true;
-        }
-
-        // Primero chequeamos si nosotros liberamos los recursos
-        for (int i = 0; i < erl.num_allocations; ++i) {
-            NodeAllocationInfo alloc = erl.node_allocations[i];
-            if (streq(alloc.erlang_connection_info.ip, my_ip) &&
-                    alloc.erlang_connection_info.port == state->agent_port) {
-                log_message("[C]: Devolviendo recursos a nosotros mismos %s:%d", my_ip, state->agent_port);
-                pthread_mutex_lock(&state->res_protection);
-                increase_resources(&state->node_resources, alloc.res_kind, alloc.amount);
-                pthread_mutex_unlock(&state->res_protection);
-            }
-        }
-
-        // Luego buscamos en los otros nodos
-        for (ListNode *p = agent_fds; p != NULL; p = p->next) {
-            for (int i = 0; i < erl.num_allocations; ++i) {
-                NodeAllocationInfo alloc = erl.node_allocations[i];
-                if (*(int *)p->data == alloc.agent_fd) {
-                    log_message("[C]: Enviando RELEASE al agente de C al que se le pidió recursos (%s:%d)",
-                            alloc.erlang_connection_info.ip, alloc.erlang_connection_info.port);
-
-                    char resource[4] = { 0 };
-                    if (alloc.res_kind == RES_KIND_CPU)
-                        strcpy(resource, "cpu");
-                    if (alloc.res_kind == RES_KIND_MEM)
-                        strcpy(resource, "mem");
-                    if (alloc.res_kind == RES_KIND_GPU)
-                        strcpy(resource, "gpu");
-
-                    char buffer[BUFFER_MAX_SIZE]  = { 0 };
-                    sprintf(buffer, "RELEASE %lld %s %d\n", job_id, resource, alloc.amount);
-                    send(alloc.agent_fd, buffer, strlen(buffer), 0);
-                }
-            }
-        }
-
-        time_t current_time;
-        if (find_in_queue(state->job_queue, erl.job_id))
-            current_time = time_req;
-        else
-            current_time = time(NULL);
-        
-        free(remote_allocs);
-        JobQueueData data = {erl, current_time};
-
+    // Si todos los recursos pedidos fueron locales, nos sacamos aca mismo el caso de encima.
+    if (new_pending_job->resources_granted == new_pending_job->total_resources_needed){
+        char reserve_msg[BUFFER_MAX_SIZE] = { 0 };
+        sprintf(reserve_msg, "JOB_GRANTED %lld\n", job_id);
+        send(erl.erlang_fd, reserve_msg, strlen(reserve_msg), 0);
+        JobMapCell* new_job = calloc(1,sizeof(JobMapCell));
+        new_job->granted_resources = local;
+        new_job->job_id = erl.job_id;
+        new_job->num_remotely_allocated = 0;
+        new_job->remote_allocations = NULL;
+        hashmap_put(state->job_map, new_job);
         pthread_mutex_lock(&state->protection.mutex);
-        log_message("[C]: Metiendo Job a la queue");
-        state->job_queue = enqueue(state->job_queue, &data, (QueueCpyFunc)job_copy);
+        state->pending_jobs = delete_from_list_by_id(state->pending_jobs,new_pending_job->job_id, (ListFreeFunc)pending_job_free);
         pthread_mutex_unlock(&state->protection.mutex);
-
-        log_message("[C]: Encolando el job con id %lld", job_id);
-        pthread_cond_signal(&state->protection.nonempty_queue_cond);
-        return;
-    }
-
-    // Creamos el job y lo insertamos en la tabla de jobs activos
-    JobMapCell *cell = calloc(1, sizeof(JobMapCell));
-    cell->job_id = job_id;
-    cell->num_remotely_allocated = erl.num_allocations;
-    cell->remote_allocations = remote_allocs;
-    cell->granted_resources = local;
-
-    hashmap_put(state->job_map, cell);
-
-    log_message("[C]: Enviando JOB_GRANTED al cliente Erlang");
-
-    memset(msg, 0, BUFFER_MAX_SIZE - 1);
-
-    if (!erl.sent_message) {
-        sprintf(msg, "JOB_GRANTED %lld\n", job_id);
-        send(erl.erlang_fd, msg, strlen(msg), 0);
-        erl.sent_message = true;
     }
 }
+
 
 // Maneja una petición del tipo JOB_RELEASE
 void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
@@ -421,7 +345,7 @@ void handle_job_status(ErlangRequest erl, AgentState *state)
         log_message("[C]: Enviando timeout al cliente Erlang");
 
         pthread_mutex_lock(&state->protection.mutex);
-        state->timed_out_jobs = delete_from_timed_out_jobs(state->timed_out_jobs, job_id);
+        state->timed_out_jobs = delete_from_list_by_id(state->timed_out_jobs, job_id, free);
     }
 
     pthread_mutex_unlock(&state->protection.mutex);
@@ -454,22 +378,23 @@ bool find_in_list(List list, long long id)
     return false;
 }
 
-// Elimina un job que recibió un TIMEOUT con id 'id'
-List delete_from_timed_out_jobs(List timed_out_jobs, long long id)
+// Elimina un elemento de list por id
+List delete_from_list_by_id(List list, long long id, ListFreeFunc fr)
 {
-    if (list_empty(timed_out_jobs))
-        return timed_out_jobs;
+    if (list_empty(list))
+        return list;
 
-    long long *data = (long long *)timed_out_jobs->data;
+    long long *data = (long long *)list->data;
     if (*data == id) {
-        ListNode *node = timed_out_jobs;
-        timed_out_jobs = timed_out_jobs->next;
+        ListNode *node = list;
+        list = list->next;
+        fr(node->data);
         free(node);
-        return timed_out_jobs;
+        return list;
     }
 
-    timed_out_jobs->next = delete_from_timed_out_jobs(timed_out_jobs->next, id);
-    return timed_out_jobs;
+    list->next = delete_from_list_by_id(list->next, id, fr);
+    return list;
 }
 
 // Maneja una petición del tipo GET_NODES

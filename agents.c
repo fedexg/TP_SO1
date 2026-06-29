@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -7,6 +8,8 @@
 #include <errno.h>
 
 #include "agents.h"
+#include "const.h"
+#include "ds/list.h"
 #include "utils.h"
 #include "resources.h"
 #include "types.h"
@@ -18,6 +21,7 @@
 void handle_unexpected_disconnection(Hashmap node_map, Hashmap job_map,
                                      LocalResources *node_resources, int fd);
 NodeMapCell *find_node_by_fd(Hashmap node_map, int fd);
+PendingJob *find_in_pending_job_list(List list, long long id);
 
 // Manejar requests (si es posible) proveniente de agentes de C
 // Si ocurre una desconexión inesperada, se toma en cuenta
@@ -96,26 +100,23 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
 
     case REQUEST_KIND_RELEASE:
         log_message("[C]: Procesando petición de tipo RELEASE sobre job id %lld", req.job_id);
-
         // Retomamos los recursos que dimos al agente que pidió recursos
-        increase_resources(&state->node_resources, req.res_kind, req.amount);
         JobMapCell search_job;
         search_job.job_id = req.job_id;
  
         JobMapCell *cell = hashmap_search(state->job_map, &search_job);
 
-        // No encontramos un trabajo con ese id, así que enviamos DENIED
+        // No participamos en el job, entonces no hacemos nada
         if (cell == NULL) {
-            log_message("[C]: Enviando DENIED al agente con descriptor %d", c_agent_fd);
-            sprintf(response_to_agent, "DENIED %lld\n", req.job_id);
-            send(c_agent_fd, response_to_agent, strlen(response_to_agent), 0);
             return;
         }
 
-        // El trabajo existe, entonces devolvemos los recursos a ese agente
+        // El trabajo existe, entonces devolvemos los recursos nuestro agente,
+        // modificamos la tabla de jobs para reflejar que ahora damos menos recursos
         // y eliminamos el trabajo en caso de no tener más recursos que usar;
         // De lo contrario, lo ponemos en nuestra tabla de trabajos para seguir
         // usandolo
+        increase_resources(&state->node_resources, req.res_kind, req.amount);
         give_resources(&cell->granted_resources, req.res_kind, req.amount);
         if (cell->granted_resources.current_cpu == 0 && cell->granted_resources.current_gpu == 0 &&
             cell->granted_resources.current_mem == 0) {
@@ -142,6 +143,82 @@ void process_request(int c_agent_fd, int epoll_fd, Request req, AgentState *stat
         pthread_mutex_unlock(&state->protection.mutex);
 
         break;
+    case REQUEST_KIND_GRANTED: {
+        PendingJob* pending_job = find_in_pending_job_list(state->pending_jobs,req.job_id); // TODO: implementar esta funcion (te devuelve el void* data de state->pending_jobs)
+        pending_job->resources_granted++;
+        if (pending_job->resources_granted == pending_job->total_resources_needed){
+            JobMapCell* new_job = calloc(1,sizeof(JobMapCell));
+            new_job->granted_resources = pending_job->my_resources_granted;
+            new_job->job_id = pending_job->job_id;
+            new_job->num_remotely_allocated = pending_job->num_remote_allocated;
+            char granted_msg[BUFFER_MAX_SIZE] = { 0 };
+            sprintf(granted_msg, "JOB_GRANTED %lld\n", req.job_id);
+            send(pending_job->erlang_socket, granted_msg, strlen(granted_msg), 0);
+        }
+        break;
+    }
+    case REQUEST_KIND_DENIED: {
+        // Si recibimos un denied, ya el trabajo no se va a poder hacer, no importa cuantos granteds recibamos
+        PendingJob* pending_job = find_in_pending_job_list(state->pending_jobs,req.job_id); 
+        // Liberamos nuestros propios recursos
+        pthread_mutex_lock(&state->res_protection);
+        if (pending_job->my_resources_granted.current_cpu > 0)
+            increase_resources(&state->node_resources, RES_KIND_CPU, pending_job->my_resources_granted.current_cpu);
+        if (pending_job->my_resources_granted.current_mem > 0)
+            increase_resources(&state->node_resources, RES_KIND_MEM, pending_job->my_resources_granted.current_mem);
+        if (pending_job->my_resources_granted.current_gpu > 0)
+            increase_resources(&state->node_resources, RES_KIND_GPU, pending_job->my_resources_granted.current_gpu);
+        pthread_mutex_unlock(&state->res_protection);
+        // Liberamos los recursos remotos (mandamos RELEASE a todos, total si le mandamos RELEASE a un nodo que no dio recursos no deberia pasar nada)
+        for (int i = 0; i < pending_job->num_remote_allocated;i++){
+            char release_msg[BUFFER_MAX_SIZE] = { 0 };
+            if (pending_job->remote_allocations[i].resources.current_cpu > 0) {
+                sprintf(release_msg, "RELEASE %lld cpu %d\n", req.job_id, req.amount);
+                send(pending_job->erlang_socket, release_msg, strlen(release_msg), 0);
+            } else if (pending_job->remote_allocations[i].resources.current_mem > 0) {
+                sprintf(release_msg, "RELEASE %lld mem %d\n", req.job_id, req.amount);
+                send(pending_job->erlang_socket, release_msg, strlen(release_msg), 0);
+            } else if (pending_job->remote_allocations[i].resources.current_gpu > 0) {
+                sprintf(release_msg, "RELEASE %lld gpu %d\n", req.job_id, req.amount);
+                send(pending_job->erlang_socket, release_msg, strlen(release_msg), 0);
+            }
+        }
+        // Metemos el Job a la queue para que se pueda hacer en otro momento
+        pthread_mutex_lock(&state->protection.mutex);
+        JobQueueData* job_to_enqueue = calloc(1,sizeof(JobQueueData));
+        job_to_enqueue->request.erlang_fd = pending_job->erlang_socket;
+        job_to_enqueue->request.job_id = req.job_id;
+        job_to_enqueue->request.num_allocations = pending_job->num_remote_allocated;
+        job_to_enqueue->request.node_allocations = calloc(pending_job->num_remote_allocated, sizeof(NodeAllocationInfo));
+        for (int i = 0; i < pending_job->num_remote_allocated; i++) {
+            NodeAllocationInfo *alloc = &job_to_enqueue->request.node_allocations[i];
+            alloc->erlang_connection_info.ip = strdup(pending_job->remote_allocations[i].connection_info.ip);
+            alloc->erlang_connection_info.port = pending_job->remote_allocations[i].connection_info.port;
+            alloc->agent_fd = pending_job->remote_allocations[i].remote_agent_fd;
+
+            int cpu = pending_job->remote_allocations[i].resources.current_cpu;
+            int mem = pending_job->remote_allocations[i].resources.current_mem;
+            int gpu = pending_job->remote_allocations[i].resources.current_gpu;
+            if (cpu > 0) {
+                alloc->res_kind = RES_KIND_CPU;
+                alloc->amount = cpu;
+            } else if (mem > 0) {
+                alloc->res_kind = RES_KIND_MEM;
+                alloc->amount = mem;
+            } else if (gpu > 0) {
+                alloc->res_kind = RES_KIND_GPU;
+                alloc->amount = gpu;
+            }       
+        }
+        job_to_enqueue->time_when_alloc = time(NULL);
+        pthread_mutex_unlock(&state->protection.mutex);
+
+        // Notificamos al erlang que el job no se pudo hacer
+        char denied_msg[BUFFER_MAX_SIZE] = { 0 };
+        sprintf(denied_msg, "JOB_DENIED %lld\n", req.job_id);
+        send(pending_job->erlang_socket, denied_msg, strlen(denied_msg), 0);
+        break;
+    }
     default:
         break;
     }
@@ -246,6 +323,17 @@ NodeMapCell *find_node_by_fd(Hashmap node_map, int fd)
             if (node->socket_fd == fd)
                 return node;
         }
+    }
+
+    return NULL;
+}
+
+PendingJob *find_in_pending_job_list(List list, long long id)
+{
+    for (ListNode *actual_node = list; actual_node != NULL; actual_node = actual_node->next) {
+        long long job_id = *(long long *)actual_node->data;
+        if (job_id == id)
+            return (PendingJob *)actual_node->data;
     }
 
     return NULL;
