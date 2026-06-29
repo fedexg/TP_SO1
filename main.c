@@ -651,7 +651,7 @@ void *epoll_handler(void *arg)
                 case CONN_TYPE_CLIENT_REMOTE: {
                     char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
                     ssize_t bytes_read = read_full_line(c->fd, recv_buffer, c->recv_buffer, &c->recv_len);
-                    handle_c_agent(c->fd, recv_buffer, bytes_read, epoll_fd, &state);
+                    handle_c_agent(c->fd, c->recv_buffer, bytes_read, epoll_fd, &state);
 
                     if (bytes_read <= 0) {
                         close(c->fd);
@@ -664,7 +664,7 @@ void *epoll_handler(void *arg)
                 case CONN_TYPE_CLIENT_ERLANG: {
                     char recv_buffer[BUFFER_MAX_SIZE] = { 0 };
                     ssize_t bytes_read = read_full_line(c->fd, recv_buffer, c->recv_buffer, &c->recv_len);
-                    handle_erlang_client(c->fd, recv_buffer, bytes_read, time(NULL), epoll_fd, &state);
+                    handle_erlang_client(c->fd, c->recv_buffer, bytes_read, time(NULL), epoll_fd, &state);
                     if (bytes_read <= 0) {
                         close(c->fd);
                         free(c);

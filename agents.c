@@ -48,7 +48,7 @@ void handle_c_agent(int c_agent_fd, char *buffer, ssize_t bytes_read,
         if (length < 1 || parse_request(&request, request_fields, length) < 0) {
             log_message("Error en el parseo de la request");
             char buffer[BUFFER_MAX_SIZE] = { 0 };
-            sprintf(buffer, "JOB_DENIED %lld", request.job_id);
+            sprintf(buffer, "DENIED %lld", request.job_id);
             send(c_agent_fd, buffer, strlen(buffer), 0);
             return;
         } else {

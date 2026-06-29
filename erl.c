@@ -230,7 +230,8 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
             default:
                 break;
             }
-            new_pending_job->num_remote_allocated++;
+
+            ++new_pending_job->num_remote_allocated;
 
             // Mandamos el RESERVE
             log_message("[C]: Enviando RESERVE al agente remoto (%s:%d)", ip, port);
@@ -241,28 +242,32 @@ void handle_job_request(ErlangRequest erl, time_t time_req, int epoll_fd, AgentS
     }
 
     // Si todos los recursos pedidos fueron locales, nos sacamos aca mismo el caso de encima.
-    if (new_pending_job->resources_granted == new_pending_job->total_resources_needed){
+    if (new_pending_job->resources_granted == new_pending_job->total_resources_needed) {
         char reserve_msg[BUFFER_MAX_SIZE] = { 0 };
         sprintf(reserve_msg, "JOB_GRANTED %lld\n", job_id);
         send(erl.erlang_fd, reserve_msg, strlen(reserve_msg), 0);
-        JobMapCell* new_job = calloc(1,sizeof(JobMapCell));
+        JobMapCell *new_job = calloc(1, sizeof(JobMapCell));
         new_job->granted_resources = local;
         new_job->job_id = erl.job_id;
         new_job->num_remotely_allocated = 0;
         new_job->remote_allocations = NULL;
+
         hashmap_put(state->job_map, new_job);
+
         pthread_mutex_lock(&state->protection.mutex);
-        state->pending_jobs = delete_from_list_by_id(state->pending_jobs,new_pending_job->job_id, (ListFreeFunc)pending_job_free);
+        state->pending_jobs = delete_from_list_by_id(state->pending_jobs, new_pending_job->job_id, (ListFreeFunc)pending_job_free);
         pthread_mutex_unlock(&state->protection.mutex);
     }
 }
 
-
 // Maneja una petición del tipo JOB_RELEASE
 void handle_job_release(ErlangRequest erl, int epoll_fd, AgentState *state)
 {
+    JobMapCell search_job;
     long long job_id = erl.job_id;
-    JobMapCell *cell = hashmap_search(state->job_map, &job_id);
+    search_job.job_id = job_id;
+
+    JobMapCell *cell = hashmap_search(state->job_map, &search_job);
 
     // No encontramos un trabajo con este id, informarlo al cliente
     if (cell == NULL) {
